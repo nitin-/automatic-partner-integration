@@ -814,6 +814,24 @@ const SequenceBuilder: React.FC<SequenceBuilderProps> = ({
         </div>
       </div>
 
+      {/* API Response Storage Info */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div className="flex items-start space-x-3">
+          <div className="flex-shrink-0">
+            <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center">
+              <span className="text-blue-600 text-sm font-medium">ℹ</span>
+            </div>
+          </div>
+          <div className="flex-1">
+            <h4 className="text-sm font-medium text-blue-900">API Response Storage</h4>
+            <p className="text-sm text-blue-700 mt-1">
+              All API responses from sequence execution are automatically saved and can be used to populate target fields in the field mapping interface. 
+              This ensures your field mappings are based on actual data structures returned by lenders.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Sequence Configuration */}
       <div className="bg-white p-6 rounded-lg border border-gray-200">
         <h4 className="text-md font-medium text-gray-900 mb-4">Sequence Configuration</h4>

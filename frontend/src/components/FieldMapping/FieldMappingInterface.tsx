@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   ArrowsRightLeftIcon,
   CogIcon,
@@ -6,6 +6,7 @@ import {
   TrashIcon,
   EyeIcon,
   EyeSlashIcon,
+  ArrowPathIcon,
 } from '@heroicons/react/24/outline';
 import { apiService } from '../../services/api';
 import toast from 'react-hot-toast';
@@ -24,6 +25,12 @@ interface FieldMapping {
   fallback_value?: string;
 }
 
+interface ApiResponseField {
+  field: string;
+  count: number;
+  frequency: number;
+}
+
 interface FieldMappingInterfaceProps {
   lenderId: number;
   onMappingChange: (mappings: FieldMapping[]) => void;
@@ -37,10 +44,12 @@ const FieldMappingInterface: React.FC<FieldMappingInterfaceProps> = ({
 }) => {
   const [mappings, setMappings] = useState<FieldMapping[]>(initialMappings);
   const [sourceFields, setSourceFields] = useState<string[]>([]);
-  const [targetFields, setTargetFields] = useState<string[]>([]);
+  const [targetFields, setTargetFields] = useState<ApiResponseField[]>([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [sampleData, setSampleData] = useState<string>('{}');
   const [lastResult, setLastResult] = useState<any>(null);
+  const [loadingTargetFields, setLoadingTargetFields] = useState(false);
+  const [targetFieldsError, setTargetFieldsError] = useState<string | null>(null);
 
   // Sample source fields (your standard fields)
   const sampleSourceFields = useMemo(() => [
@@ -61,29 +70,58 @@ const FieldMappingInterface: React.FC<FieldMappingInterfaceProps> = ({
     'routing_number'
   ], []);
 
-  // Sample target fields (lender fields)
-  const sampleTargetFields = useMemo(() => [
-    'customer_name',
-    'email_address',
-    'mobile_number',
-    'birth_date',
-    'residential_address',
-    'city_name',
-    'state_code',
-    'postal_code',
-    'requested_amount',
-    'product_type',
-    'employment_type',
-    'income_amount',
-    'social_security_number',
-    'account_number',
-    'bank_routing'
-  ], []);
+  // Load target fields from actual API responses
+  const loadTargetFieldsFromApiResponses = useCallback(async () => {
+    try {
+      setLoadingTargetFields(true);
+      setTargetFieldsError(null);
+      
+      const response = await apiService.get<{
+        fields: ApiResponseField[];
+        total_responses: number;
+        unique_fields_count: number;
+      }>(`/lenders/${lenderId}/api-response-fields`);
+      
+      if (response.data?.fields) {
+        setTargetFields(response.data.fields);
+        toast.success(`Loaded ${response.data.fields.length} fields from ${response.data.total_responses} API responses`);
+      } else {
+        setTargetFields([]);
+        toast('No API response data found. Run some integrations first to populate target fields.', { icon: 'ℹ️' });
+      }
+    } catch (error: any) {
+      console.error('Failed to load target fields:', error);
+      setTargetFieldsError(error.response?.data?.message || 'Failed to load target fields from API responses');
+      toast.error('Failed to load target fields from API responses');
+      
+      // Fallback to sample fields if API call fails
+      setTargetFields([
+        { field: 'customer_name', count: 1, frequency: 100 },
+        { field: 'email_address', count: 1, frequency: 100 },
+        { field: 'mobile_number', count: 1, frequency: 100 },
+        { field: 'birth_date', count: 1, frequency: 100 },
+        { field: 'residential_address', count: 1, frequency: 100 },
+        { field: 'city_name', count: 1, frequency: 100 },
+        { field: 'state_code', count: 1, frequency: 100 },
+        { field: 'postal_code', count: 1, frequency: 100 },
+        { field: 'requested_amount', count: 1, frequency: 100 },
+        { field: 'product_type', count: 1, frequency: 100 },
+        { field: 'employment_type', count: 1, frequency: 100 },
+        { field: 'income_amount', count: 1, frequency: 100 },
+        { field: 'social_security_number', count: 1, frequency: 100 },
+        { field: 'account_number', count: 1, frequency: 100 },
+        { field: 'bank_routing', count: 1, frequency: 100 }
+      ]);
+    } finally {
+      setLoadingTargetFields(false);
+    }
+  }, [lenderId]);
 
   useEffect(() => {
     setSourceFields(sampleSourceFields);
-    setTargetFields(sampleTargetFields);
-  }, [sampleSourceFields, sampleTargetFields]);
+    // Load target fields from API responses on component mount
+    loadTargetFieldsFromApiResponses();
+  }, [lenderId, sampleSourceFields, loadTargetFieldsFromApiResponses]);
 
   useEffect(() => {
     onMappingChange(mappings);
@@ -355,6 +393,63 @@ const FieldMappingInterface: React.FC<FieldMappingInterfaceProps> = ({
         )}
       </div>
 
+      {/* Field Source Status */}
+      <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-medium text-blue-900">API Response Fields</h3>
+            <p className="text-sm text-blue-700 mt-1">
+              Target fields are automatically loaded from actual API responses for this lender.
+              {targetFields.length > 0 ? (
+                <> Currently showing {targetFields.length} unique fields from recent API responses.</>
+              ) : (
+                <> No API response data found. Run some integrations first to populate target fields.</>
+              )}
+            </p>
+          </div>
+          <button
+            onClick={loadTargetFieldsFromApiResponses}
+            disabled={loadingTargetFields}
+            className="inline-flex items-center px-3 py-2 text-sm font-medium text-blue-700 bg-blue-100 hover:bg-blue-200 disabled:opacity-50 disabled:cursor-not-allowed rounded-md"
+          >
+            <ArrowPathIcon className={`w-4 h-4 mr-2 ${loadingTargetFields ? 'animate-spin' : ''}`} />
+            {loadingTargetFields ? 'Loading...' : 'Refresh Fields'}
+          </button>
+        </div>
+        {targetFieldsError && (
+          <div className="mt-3 p-3 bg-red-100 border border-red-200 rounded-md">
+            <p className="text-sm text-red-700">{targetFieldsError}</p>
+          </div>
+        )}
+        {targetFields.length > 0 && (
+          <div className="mt-3">
+            <details className="text-sm">
+              <summary className="cursor-pointer text-blue-700 hover:text-blue-800 font-medium">
+                View Sample API Response Structure
+              </summary>
+              <div className="mt-2 p-3 bg-white border border-blue-200 rounded-md">
+                <p className="text-xs text-gray-600 mb-2">
+                  This shows the structure of recent API responses to help you understand available fields:
+                </p>
+                <div className="max-h-40 overflow-y-auto">
+                  {targetFields.slice(0, 20).map((field) => (
+                    <div key={field.field} className="flex justify-between items-center py-1 text-xs">
+                      <code className="text-blue-800 bg-blue-50 px-1 rounded">{field.field}</code>
+                      <span className="text-gray-500">{field.frequency.toFixed(1)}% frequency</span>
+                    </div>
+                  ))}
+                  {targetFields.length > 20 && (
+                    <p className="text-xs text-gray-500 mt-2">
+                      ... and {targetFields.length - 20} more fields
+                    </p>
+                  )}
+                </div>
+              </div>
+            </details>
+          </div>
+        )}
+      </div>
+
       {/* Field Mapping List */}
       <div className="space-y-4">
         {mappings.map((mapping, index) => (
@@ -432,21 +527,46 @@ const FieldMappingInterface: React.FC<FieldMappingInterfaceProps> = ({
 
               {/* Target Field */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Target Field (Lender Field)
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Target Field (Lender Field)
+                  </label>
+                  <button
+                    type="button"
+                    onClick={loadTargetFieldsFromApiResponses}
+                    disabled={loadingTargetFields}
+                    className="inline-flex items-center px-2 py-1 text-xs font-medium text-blue-600 hover:text-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    title="Refresh fields from API responses"
+                  >
+                    <ArrowPathIcon className={`w-3 h-3 mr-1 ${loadingTargetFields ? 'animate-spin' : ''}`} />
+                    Refresh
+                  </button>
+                </div>
                 <select
                   value={mapping.target_field}
                   onChange={(e) => updateMapping(index, 'target_field', e.target.value)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   <option value="">Select Target Field</option>
-                  {targetFields.map((field) => (
-                    <option key={field} value={field}>
-                      {field}
-                    </option>
-                  ))}
+                  {loadingTargetFields ? (
+                    <option value="">Loading fields...</option>
+                  ) : targetFieldsError ? (
+                    <option value="">Error: {targetFieldsError}</option>
+                  ) : targetFields.length === 0 ? (
+                    <option value="">No fields available - run integrations first</option>
+                  ) : (
+                    targetFields.map((field) => (
+                      <option key={field.field} value={field.field}>
+                        {field.field} ({field.frequency.toFixed(1)}% frequency)
+                      </option>
+                    ))
+                  )}
                 </select>
+                {targetFields.length > 0 && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    {targetFields.length} fields from {targetFields.reduce((sum, f) => sum + f.count, 0)} API responses
+                  </p>
+                )}
               </div>
             </div>
 

@@ -365,6 +365,85 @@ async def get_field_mappings(
         raise HTTPException(status_code=500, detail="Failed to retrieve field mappings")
 
 
+@router.get("/{lender_id}/api-response-fields", response_model=ResponseModel)
+async def get_api_response_fields(
+    lender_id: int,
+    limit: int = Query(50, ge=1, le=200, description="Number of recent API responses to analyze"),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get unique fields from saved API responses for field mapping"""
+    try:
+        from ....models.integration import IntegrationLog, Integration
+        
+        # Get recent successful API responses for this lender
+        result = await db.execute(
+            select(IntegrationLog.response_data)
+            .join(Integration)
+            .where(
+                Integration.lender_id == lender_id,
+                IntegrationLog.response_status < 400,  # Only successful responses
+                IntegrationLog.response_data.isnot(None)
+            )
+            .order_by(IntegrationLog.created_at.desc())
+            .limit(limit)
+        )
+        
+        response_logs = result.scalars().all()
+        
+        if not response_logs:
+            return ResponseModel(
+                message="No API response data found for this lender",
+                data={"fields": [], "total_responses": 0}
+            )
+        
+        # Extract unique fields from all responses
+        all_fields = set()
+        field_counts = {}
+        
+        for response_data in response_logs:
+            if isinstance(response_data, dict):
+                _extract_fields_recursive(response_data, "", all_fields, field_counts)
+        
+        # Convert to sorted list with field counts
+        field_list = [
+            {
+                "field": field,
+                "count": field_counts.get(field, 0),
+                "frequency": (field_counts.get(field, 0) / len(response_logs)) * 100
+            }
+            for field in sorted(all_fields)
+        ]
+        
+        return ResponseModel(
+            message="API response fields retrieved successfully",
+            data={
+                "fields": field_list,
+                "total_responses": len(response_logs),
+                "unique_fields_count": len(all_fields)
+            }
+        )
+        
+    except Exception as e:
+        logger.error("Failed to retrieve API response fields", lender_id=lender_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve API response fields")
+
+
+def _extract_fields_recursive(data: dict, prefix: str, all_fields: set, field_counts: dict):
+    """Recursively extract field names from nested JSON data"""
+    for key, value in data.items():
+        field_path = f"{prefix}.{key}" if prefix else key
+        all_fields.add(field_path)
+        field_counts[field_path] = field_counts.get(field_path, 0) + 1
+        
+        if isinstance(value, dict):
+            _extract_fields_recursive(value, field_path, all_fields, field_counts)
+        elif isinstance(value, list) and value and isinstance(value[0], dict):
+            # Handle array of objects
+            for item in value[:3]:  # Limit to first 3 items to avoid excessive recursion
+                if isinstance(item, dict):
+                    _extract_fields_recursive(item, f"{field_path}[]", all_fields, field_counts)
+
+
 @router.post("/{lender_id}/field-mappings", response_model=ResponseModel)
 async def save_field_mappings(
     lender_id: int,
