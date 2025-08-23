@@ -1,0 +1,145 @@
+# Generated Dockerfile for {{ language | title }} API Client
+# Generated on: {{ generation_timestamp | datetime }}
+
+{% if language == 'python' %}
+FROM python:3.11-slim
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+# Set work directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        curl \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY . .
+
+# Create non-root user
+RUN adduser --disabled-password --gecos '' appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
+# Expose port
+EXPOSE {{ config.get('port', 8000) }}
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:{{ config.get('port', 8000) }}/health || exit 1
+
+# Start the application
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "{{ config.get('port', 8000) }}"]
+
+{% elif language in ['javascript', 'typescript'] %}
+FROM node:18-alpine
+
+# Set work directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm ci --only=production
+
+# Copy source code
+COPY . .
+
+# Build the app (for TypeScript)
+{% if language == 'typescript' %}
+RUN npm run build
+{% endif %}
+
+# Create non-root user
+RUN adduser -D appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
+# Expose port
+EXPOSE {{ config.get('port', 3000) }}
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:{{ config.get('port', 3000) }}/health || exit 1
+
+# Start the application
+CMD ["npm", "start"]
+
+{% elif language == 'java' %}
+FROM openjdk:17-jdk-slim
+
+# Set work directory
+WORKDIR /app
+
+# Copy application JAR
+COPY target/*.jar app.jar
+
+# Create non-root user
+RUN adduser --disabled-password --gecos '' appuser \
+    && chown -R appuser:appuser /app
+USER appuser
+
+# Expose port
+EXPOSE {{ config.get('port', 8080) }}
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:{{ config.get('port', 8080) }}/actuator/health || exit 1
+
+# Start the application
+CMD ["java", "-jar", "app.jar"]
+
+{% elif language == 'csharp' %}
+FROM mcr.microsoft.com/dotnet/aspnet:7.0 AS base
+WORKDIR /app
+EXPOSE {{ config.get('port', 5000) }}
+
+FROM mcr.microsoft.com/dotnet/sdk:7.0 AS build
+WORKDIR /src
+COPY ["*.csproj", "./"]
+RUN dotnet restore "*.csproj"
+COPY . .
+RUN dotnet build "*.csproj" -c Release -o /app/build
+
+FROM build AS publish
+RUN dotnet publish "*.csproj" -c Release -o /app/publish
+
+FROM base AS final
+WORKDIR /app
+COPY --from=publish /app/publish .
+ENTRYPOINT ["dotnet", "*.dll"]
+
+{% else %}
+# Generic Dockerfile for {{ language }}
+FROM ubuntu:20.04
+
+# Install basic dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy application files
+COPY . .
+
+# Expose port
+EXPOSE {{ config.get('port', 8000) }}
+
+# Default command
+CMD ["echo", "Please customize this Dockerfile for {{ language }}"]
+{% endif %}

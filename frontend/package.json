@@ -1,0 +1,71 @@
+{
+  "name": "lender-framework-frontend",
+  "version": "1.0.0",
+  "description": "Frontend for Lender API Integration Framework",
+  "private": true,
+  "dependencies": {
+    "@headlessui/react": "^1.7.15",
+    "@heroicons/react": "^2.0.17",
+    "@monaco-editor/react": "^4.5.1",
+    "@testing-library/jest-dom": "^5.16.4",
+    "@testing-library/react": "^13.3.0",
+    "@testing-library/user-event": "^13.5.0",
+    "@types/jest": "^27.5.2",
+    "@types/node": "^16.11.56",
+    "@types/react": "^18.0.17",
+    "@types/react-beautiful-dnd": "^13.1.8",
+    "@types/react-dom": "^18.0.6",
+    "axios": "^1.4.0",
+    "clsx": "^1.2.1",
+    "date-fns": "^2.30.0",
+    "monaco-editor": "^0.40.0",
+    "react": "^18.2.0",
+    "react-beautiful-dnd": "^13.1.1",
+    "react-dom": "^18.2.0",
+    "react-hook-form": "^7.44.3",
+    "react-hot-toast": "^2.4.0",
+    "react-json-pretty": "^2.2.0",
+    "react-query": "^3.39.3",
+    "react-router-dom": "^6.11.2",
+    "react-scripts": "5.0.1",
+    "tailwindcss": "^3.3.2",
+    "typescript": "^4.7.4",
+    "web-vitals": "^2.1.4"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject",
+    "lint": "eslint src --ext .ts,.tsx",
+    "lint:fix": "eslint src --ext .ts,.tsx --fix"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "devDependencies": {
+    "@types/react-json-pretty": "^2.2.0",
+    "autoprefixer": "^10.4.14",
+    "eslint": "^8.42.0",
+    "eslint-config-prettier": "^8.8.0",
+    "eslint-plugin-prettier": "^4.2.1",
+    "postcss": "^8.4.24",
+    "prettier": "^2.8.8"
+  },
+  "proxy": "http://localhost:8000"
+}

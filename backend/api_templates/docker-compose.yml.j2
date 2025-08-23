@@ -1,0 +1,110 @@
+version: '3.8'
+
+services:
+  {{ api_name }}:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: {{ api_name }}_api
+    ports:
+      - "{{ port }}:{{ port }}"
+    environment:
+      - NODE_ENV=production
+      - PORT={{ port }}
+      {% if config.get('environment') %}
+      {% for key, value in config.environment.items() %}
+      - {{ key }}={{ value }}
+      {% endfor %}
+      {% endif %}
+    volumes:
+      {% if config.get('volumes') %}
+      {% for volume in config.volumes %}
+      - {{ volume }}
+      {% endfor %}
+      {% else %}
+      - ./logs:/app/logs
+      {% endif %}
+    networks:
+      - {{ api_name }}_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:{{ port }}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    {% if config.get('depends_on') %}
+    depends_on:
+      {% for service in config.depends_on %}
+      - {{ service }}
+      {% endfor %}
+    {% endif %}
+
+  {% if config.get('database') %}
+  {{ api_name }}_db:
+    image: {{ config.database.image | default('postgres:15-alpine') }}
+    container_name: {{ api_name }}_database
+    environment:
+      - POSTGRES_DB={{ config.database.name | default(api_name + '_db') }}
+      - POSTGRES_USER={{ config.database.user | default('postgres') }}
+      - POSTGRES_PASSWORD={{ config.database.password | default('password') }}
+    volumes:
+      - {{ api_name }}_db_data:/var/lib/postgresql/data
+    networks:
+      - {{ api_name }}_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{ config.database.user | default('postgres') }}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  {% endif %}
+
+  {% if config.get('redis') %}
+  {{ api_name }}_redis:
+    image: {{ config.redis.image | default('redis:7-alpine') }}
+    container_name: {{ api_name }}_redis
+    ports:
+      - "{{ config.redis.port | default('6379') }}:6379"
+    volumes:
+      - {{ api_name }}_redis_data:/data
+    networks:
+      - {{ api_name }}_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  {% endif %}
+
+  {% if config.get('nginx') %}
+  {{ api_name }}_nginx:
+    image: {{ config.nginx.image | default('nginx:alpine') }}
+    container_name: {{ api_name }}_nginx
+    ports:
+      - "{{ config.nginx.port | default('80') }}:80"
+      - "{{ config.nginx.ssl_port | default('443') }}:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - ./ssl:/etc/nginx/ssl
+    depends_on:
+      - {{ api_name }}
+    networks:
+      - {{ api_name }}_network
+    restart: unless-stopped
+  {% endif %}
+
+volumes:
+  {% if config.get('database') %}
+  {{ api_name }}_db_data:
+    driver: local
+  {% endif %}
+  {% if config.get('redis') %}
+  {{ api_name }}_redis_data:
+    driver: local
+  {% endif %}
+
+networks:
+  {{ api_name }}_network:
+    driver: bridge

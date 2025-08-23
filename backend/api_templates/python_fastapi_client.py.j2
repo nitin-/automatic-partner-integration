@@ -1,0 +1,200 @@
+"""
+Generated API Client for {{ lender.name }}
+Generated on: {{ generation_timestamp | datetime }}
+"""
+
+import httpx
+import json
+from typing import Dict, Any, Optional, List
+from dataclasses import dataclass
+from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class {{ lender.name | pascal_case }}Config:
+    """Configuration for {{ lender.name }} API client"""
+    base_url: str = "{{ lender.base_url }}"
+    timeout: int = {{ lender.timeout }}
+    rate_limit: Optional[int] = {{ lender.rate_limit or 'None' }}
+    {% if lender.auth_config %}
+    auth_config: Dict[str, Any] = None
+    {% endif %}
+
+
+class {{ lender.name | pascal_case }}Client:
+    """API client for {{ lender.name }}"""
+    
+    def __init__(self, config: {{ lender.name | pascal_case }}Config):
+        self.config = config
+        self.client = httpx.AsyncClient(
+            base_url=config.base_url,
+            timeout=config.timeout
+        )
+        {% if lender.auth_config %}
+        self.auth_config = config.auth_config or {}
+        {% endif %}
+        self._setup_auth()
+    
+    def _setup_auth(self):
+        """Setup authentication based on lender configuration"""
+        {% if lender.auth_type == 'bearer' %}
+        if self.auth_config:
+            self.client.headers.update({
+                "Authorization": f"Bearer {self.auth_config.get('access_token')}"
+            })
+        {% elif lender.auth_type == 'api_key' %}
+        if self.auth_config:
+            key_name = self.auth_config.get('key_name', 'X-API-Key')
+            key_value = self.auth_config.get('key_value')
+            if key_value:
+                self.client.headers.update({key_name: key_value})
+        {% elif lender.auth_type == 'basic' %}
+        if self.auth_config:
+            import base64
+            username = self.auth_config.get('username')
+            password = self.auth_config.get('password')
+            if username and password:
+                credentials = base64.b64encode(f"{username}:{password}".encode()).decode()
+                self.client.headers.update({
+                    "Authorization": f"Basic {credentials}"
+                })
+        {% endif %}
+    
+    async def __aenter__(self):
+        return self
+    
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
+    
+    async def close(self):
+        """Close the HTTP client"""
+        await self.client.aclose()
+    
+    {% for config in api_configs %}
+    async def {{ config.name | snake_case }}(
+        self,
+        {% if config.query_params %}
+        {% for param_name, param_info in config.query_params.items() %}
+        {{ param_name }}: {{ param_info.get('type', 'str') }} = None,
+        {% endfor %}
+        {% endif %}
+        {% if config.request_body_schema %}
+        data: Dict[str, Any] = None,
+        {% endif %}
+        headers: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
+        """
+        {{ config.description or f"Call {config.name} endpoint" }}
+        
+        {% if config.query_params %}
+        Args:
+        {% for param_name, param_info in config.query_params.items() %}
+            {{ param_name }}: {{ param_info.get('description', f'{param_name} parameter') }}
+        {% endfor %}
+        {% endif %}
+        {% if config.request_body_schema %}
+            data: Request body data
+        {% endif %}
+            headers: Additional headers to send
+        
+        Returns:
+            API response data
+        """
+        url = "{{ config.endpoint_path }}"
+        
+        # Prepare query parameters
+        params = {}
+        {% if config.query_params %}
+        {% for param_name, param_info in config.query_params.items() %}
+        if {{ param_name }} is not None:
+            params["{{ param_name }}"] = {{ param_name }}
+        {% endfor %}
+        {% endif %}
+        
+        # Prepare headers
+        request_headers = {}
+        {% if config.headers %}
+        {% for header_name, header_value in config.headers.items() %}
+        request_headers["{{ header_name }}"] = "{{ header_value }}"
+        {% endfor %}
+        {% endif %}
+        if headers:
+            request_headers.update(headers)
+        
+        # Make request
+        try:
+            response = await self.client.request(
+                method="{{ config.method }}",
+                url=url,
+                params=params if params else None,
+                {% if config.request_body_schema %}
+                json=data,
+                {% endif %}
+                headers=request_headers
+            )
+            
+            # Validate response
+            if response.status_code not in {{ config.success_codes or [200] }}:
+                logger.error(
+                    f"API request failed: {response.status_code} - {response.text}",
+                    url=url,
+                    status_code=response.status_code
+                )
+                response.raise_for_status()
+            
+            return response.json()
+            
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error occurred: {e}", url=url, status_code=e.response.status_code)
+            raise
+        except Exception as e:
+            logger.error(f"Request failed: {e}", url=url)
+            raise
+    
+    {% endfor %}
+    
+    async def health_check(self) -> Dict[str, Any]:
+        """Check API health status"""
+        try:
+            response = await self.client.get("/health")
+            return response.json()
+        except Exception as e:
+            logger.error(f"Health check failed: {e}")
+            return {"status": "unhealthy", "error": str(e)}
+
+
+# Example usage
+async def main():
+    """Example usage of the {{ lender.name }} API client"""
+    config = {{ lender.name | pascal_case }}Config(
+        {% if lender.auth_config %}
+        auth_config={
+            {% for key, value in lender.auth_config.items() %}
+            "{{ key }}": "{{ value }}",
+            {% endfor %}
+        }
+        {% endif %}
+    )
+    
+    async with {{ lender.name | pascal_case }}Client(config) as client:
+        # Example API calls
+        {% for config in api_configs[:2] %}  {# Show first 2 examples #}
+        try:
+            result = await client.{{ config.name | snake_case }}()
+            print(f"{{ config.name }} result: {result}")
+        except Exception as e:
+            print(f"{{ config.name }} failed: {e}")
+        
+        {% endfor %}
+        
+        # Health check
+        health = await client.health_check()
+        print(f"Health status: {health}")
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())

@@ -1,0 +1,236 @@
+# {{ api_name }} - Generated API Client
+
+{{ description }}
+
+## Overview
+
+This is a generated API client for {{ api_name }} using {{ language | title }} and {{ framework | title }}.
+
+- **Language**: {{ language | title }}
+- **Framework**: {{ framework | title }}
+- **Generated**: {{ generated_at | datetime }}
+- **Deployment Type**: {{ deployment_type | title }}
+
+## Quick Start
+
+### Prerequisites
+
+- Docker and Docker Compose (for Docker deployment)
+- Kubernetes cluster (for Kubernetes deployment)
+- Node.js 18+ (for local development)
+- Python 3.11+ (for Python clients)
+
+### Docker Deployment
+
+1. **Build and run with Docker Compose:**
+   ```bash
+   docker-compose up --build
+   ```
+
+2. **Or build and run individually:**
+   ```bash
+   # Build the image
+   docker build -t {{ api_name.lower().replace(' ', '-') }} .
+   
+   # Run the container
+   docker run -p {{ config.get('port', 8000) }}:{{ config.get('port', 8000) }} {{ api_name.lower().replace(' ', '-') }}
+   ```
+
+### Kubernetes Deployment
+
+1. **Apply the Kubernetes manifests:**
+   ```bash
+   kubectl apply -f deployment.yaml
+   kubectl apply -f service.yaml
+   kubectl apply -f configmap.yaml
+   ```
+
+2. **Or use Helm (if chart is available):**
+   ```bash
+   helm install {{ api_name.lower().replace(' ', '-') }} ./helm-chart
+   ```
+
+### Local Development
+
+1. **Install dependencies:**
+   {% if language == 'python' %}
+   ```bash
+   pip install -r requirements.txt
+   ```
+   {% elif language in ['javascript', 'typescript'] %}
+   ```bash
+   npm install
+   ```
+   {% endif %}
+
+2. **Run the application:**
+   {% if language == 'python' %}
+   ```bash
+   uvicorn main:app --reload --host 0.0.0.0 --port {{ config.get('port', 8000) }}
+   ```
+   {% elif language in ['javascript', 'typescript'] %}
+   ```bash
+   npm run dev
+   ```
+   {% endif %}
+
+## Configuration
+
+### Environment Variables
+
+{% if config.get('environment') %}
+The following environment variables can be configured:
+
+{% for key, value in config.environment.items() %}
+- `{{ key }}`: {{ value }}
+{% endfor %}
+{% else %}
+No specific environment variables are required for this deployment.
+{% endif %}
+
+### Configuration Files
+
+- `config.yaml` - Main configuration file
+- `.env` - Environment variables (create from `.env.example`)
+
+## API Documentation
+
+Once the service is running, you can access:
+
+- **API Documentation**: http://localhost:{{ config.get('port', 8000) }}/docs
+- **Health Check**: http://localhost:{{ config.get('port', 8000) }}/health
+- **OpenAPI Spec**: http://localhost:{{ config.get('port', 8000) }}/openapi.json
+
+## Monitoring and Logs
+
+### Health Checks
+
+The service includes health check endpoints:
+
+```bash
+curl http://localhost:{{ config.get('port', 8000) }}/health
+```
+
+### Logs
+
+{% if config.get('database') %}
+- **Application logs**: `docker logs {{ api_name }}_api`
+- **Database logs**: `docker logs {{ api_name }}_database`
+{% if config.get('redis') %}
+- **Redis logs**: `docker logs {{ api_name }}_redis`
+{% endif %}
+{% else %}
+- **Application logs**: `docker logs {{ api_name }}_api`
+{% endif %}
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Port already in use:**
+   ```bash
+   # Check what's using the port
+   lsof -i :{{ config.get('port', 8000) }}
+   
+   # Kill the process or change the port in docker-compose.yml
+   ```
+
+2. **Permission denied:**
+   ```bash
+   # Fix file permissions
+   sudo chown -R $USER:$USER .
+   ```
+
+3. **Database connection issues:**
+   {% if config.get('database') %}
+   ```bash
+   # Check if database is running
+   docker ps | grep {{ api_name }}_database
+   
+   # Check database logs
+   docker logs {{ api_name }}_database
+   ```
+   {% endif %}
+
+### Debug Mode
+
+To run in debug mode, set the environment variable:
+
+```bash
+export DEBUG=true
+```
+
+## Security
+
+### Best Practices
+
+1. **Change default passwords** in production
+2. **Use HTTPS** in production environments
+3. **Enable authentication** if required
+4. **Regular security updates** for base images
+
+### SSL/TLS
+
+{% if config.get('nginx') %}
+SSL/TLS is configured through Nginx. Place your certificates in the `ssl/` directory:
+
+- `ssl/cert.pem` - SSL certificate
+- `ssl/key.pem` - Private key
+{% else %}
+For SSL/TLS, configure your reverse proxy or load balancer.
+{% endif %}
+
+## Scaling
+
+### Horizontal Scaling
+
+For Kubernetes deployments:
+
+```bash
+kubectl scale deployment {{ api_name.lower().replace(' ', '-') }} --replicas=3
+```
+
+For Docker Compose:
+
+```bash
+docker-compose up --scale {{ api_name }}=3
+```
+
+### Load Balancing
+
+{% if config.get('nginx') %}
+Nginx is configured as a load balancer. Update the nginx configuration for multiple backend instances.
+{% else %}
+Configure your load balancer to distribute traffic across multiple instances.
+{% endif %}
+
+## Backup and Recovery
+
+{% if config.get('database') %}
+### Database Backup
+
+```bash
+# Create backup
+docker exec {{ api_name }}_database pg_dump -U postgres {{ config.database.name | default(api_name + '_db') }} > backup.sql
+
+# Restore backup
+docker exec -i {{ api_name }}_database psql -U postgres {{ config.database.name | default(api_name + '_db') }} < backup.sql
+```
+{% endif %}
+
+## Support
+
+For issues and questions:
+
+1. Check the logs for error messages
+2. Review the configuration files
+3. Consult the API documentation
+4. Contact the development team
+
+## License
+
+This generated API client is provided as-is. Please review and comply with the original API provider's terms of service.
+
+---
+
+**Generated by Lender API Integration Framework**

@@ -1,0 +1,10 @@
+
+/Users/nitin.jha/codebase/lender_framework/frontend/src/components/FieldMapping/FieldMappingInterface.tsx
+  84:6  warning  React Hook useEffect has missing dependencies: 'sampleSourceFields' and 'sampleTargetFields'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+
+/Users/nitin.jha/codebase/lender_framework/frontend/src/pages/Lenders/LenderConfiguration.tsx
+  74:42  warning  'mappingsLoading' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  83:42  warning  'sequenceLoading' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+✖ 3 problems (0 errors, 3 warnings)
+

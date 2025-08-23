@@ -1,0 +1,235 @@
+/**
+ * Generated API Client for {{ lender.name }}
+ * Generated on: {{ generation_timestamp | datetime }}
+ */
+
+import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
+
+export interface {{ lender.name | pascal_case }}Config {
+  baseURL: string;
+  timeout: number;
+  rateLimit?: number;
+  {% if lender.auth_config %}
+  authConfig?: Record<string, any>;
+  {% endif %}
+}
+
+export interface ApiResponse<T = any> {
+  data: T;
+  status: number;
+  statusText: string;
+}
+
+export class {{ lender.name | pascal_case }}Client {
+  private client: AxiosInstance;
+  private config: {{ lender.name | pascal_case }}Config;
+  {% if lender.auth_config %}
+  private authConfig: Record<string, any>;
+  {% endif %}
+
+  constructor(config: {{ lender.name | pascal_case }}Config) {
+    this.config = config;
+    {% if lender.auth_config %}
+    this.authConfig = config.authConfig || {};
+    {% endif %}
+    
+    this.client = axios.create({
+      baseURL: config.baseURL,
+      timeout: config.timeout,
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+    });
+
+    this.setupAuth();
+    this.setupInterceptors();
+  }
+
+  private setupAuth(): void {
+    {% if lender.auth_type == 'bearer' %}
+    if (this.authConfig?.accessToken) {
+      this.client.defaults.headers.common['Authorization'] = `Bearer ${this.authConfig.accessToken}`;
+    }
+    {% elif lender.auth_type == 'api_key' %}
+    if (this.authConfig?.keyValue) {
+      const keyName = this.authConfig.keyName || 'X-API-Key';
+      this.client.defaults.headers.common[keyName] = this.authConfig.keyValue;
+    }
+    {% elif lender.auth_type == 'basic' %}
+    if (this.authConfig?.username && this.authConfig?.password) {
+      const credentials = btoa(`${this.authConfig.username}:${this.authConfig.password}`);
+      this.client.defaults.headers.common['Authorization'] = `Basic ${credentials}`;
+    }
+    {% endif %}
+  }
+
+  private setupInterceptors(): void {
+    // Request interceptor
+    this.client.interceptors.request.use(
+      (config) => {
+        console.log(`Making request to: ${config.method?.toUpperCase()} ${config.url}`);
+        return config;
+      },
+      (error) => {
+        console.error('Request error:', error);
+        return Promise.reject(error);
+      }
+    );
+
+    // Response interceptor
+    this.client.interceptors.response.use(
+      (response) => {
+        console.log(`Response received: ${response.status} ${response.statusText}`);
+        return response;
+      },
+      (error) => {
+        console.error('Response error:', error.response?.data || error.message);
+        return Promise.reject(error);
+      }
+    );
+  }
+
+  {% for config in api_configs %}
+  async {{ config.name | camel_case }}(
+    {% if config.query_params %}
+    {% for param_name, param_info in config.query_params.items() %}
+    {{ param_name }}?: {{ param_info.get('type', 'string') }},
+    {% endfor %}
+    {% endif %}
+    {% if config.request_body_schema %}
+    data?: Record<string, any>,
+    {% endif %}
+    config?: AxiosRequestConfig
+  ): Promise<ApiResponse> {
+    /**
+     * {{ config.description or f"Call {config.name} endpoint" }}
+     */
+    const url = '{{ config.endpoint_path }}';
+    
+    // Prepare query parameters
+    const params: Record<string, any> = {};
+    {% if config.query_params %}
+    {% for param_name, param_info in config.query_params.items() %}
+    if ({{ param_name }} !== undefined) {
+      params['{{ param_name }}'] = {{ param_name }};
+    }
+    {% endfor %}
+    {% endif %}
+
+    // Prepare headers
+    const headers: Record<string, string> = {};
+    {% if config.headers %}
+    {% for header_name, header_value in config.headers.items() %}
+    headers['{{ header_name }}'] = '{{ header_value }}';
+    {% endfor %}
+    {% endif %}
+
+    const requestConfig: AxiosRequestConfig = {
+      method: '{{ config.method }}',
+      url,
+      {% if config.query_params %}
+      params: Object.keys(params).length > 0 ? params : undefined,
+      {% endif %}
+      {% if config.request_body_schema %}
+      data,
+      {% endif %}
+      headers: Object.keys(headers).length > 0 ? headers : undefined,
+      ...config,
+    };
+
+    try {
+      const response = await this.client.request(requestConfig);
+      
+      // Validate response status
+      const successCodes = {{ config.success_codes or [200] }};
+      if (!successCodes.includes(response.status)) {
+        throw new Error(`Unexpected status code: ${response.status}`);
+      }
+
+      return {
+        data: response.data,
+        status: response.status,
+        statusText: response.statusText,
+      };
+    } catch (error) {
+      console.error(`{{ config.name }} request failed:`, error);
+      throw error;
+    }
+  }
+
+  {% endfor %}
+
+  async healthCheck(): Promise<ApiResponse> {
+    /**
+     * Check API health status
+     */
+    try {
+      const response = await this.client.get('/health');
+      return {
+        data: response.data,
+        status: response.status,
+        statusText: response.statusText,
+      };
+    } catch (error) {
+      console.error('Health check failed:', error);
+      return {
+        data: { status: 'unhealthy', error: error.message },
+        status: 500,
+        statusText: 'Internal Server Error',
+      };
+    }
+  }
+
+  // Utility methods
+  getBaseURL(): string {
+    return this.config.baseURL;
+  }
+
+  setTimeout(timeout: number): void {
+    this.config.timeout = timeout;
+    this.client.defaults.timeout = timeout;
+  }
+
+  {% if lender.auth_config %}
+  updateAuthConfig(authConfig: Record<string, any>): void {
+    this.authConfig = { ...this.authConfig, ...authConfig };
+    this.setupAuth();
+  }
+  {% endif %}
+}
+
+// Example usage
+export async function exampleUsage(): Promise<void> {
+  const config: {{ lender.name | pascal_case }}Config = {
+    baseURL: '{{ lender.base_url }}',
+    timeout: {{ lender.timeout }},
+    {% if lender.auth_config %}
+    authConfig: {
+      {% for key, value in lender.auth_config.items() %}
+      {{ key }}: '{{ value }}',
+      {% endfor %}
+    },
+    {% endif %}
+  };
+
+  const client = new {{ lender.name | pascal_case }}Client(config);
+
+  try {
+    // Example API calls
+    {% for config in api_configs[:2] %}  {# Show first 2 examples #}
+    const {{ config.name | camel_case }}Result = await client.{{ config.name | camel_case }}();
+    console.log('{{ config.name }} result:', {{ config.name | camel_case }}Result);
+    
+    {% endfor %}
+
+    // Health check
+    const health = await client.healthCheck();
+    console.log('Health status:', health);
+  } catch (error) {
+    console.error('Example usage failed:', error);
+  }
+}
+
+// Export types for external use
+export type { {{ lender.name | pascal_case }}Config, ApiResponse };
