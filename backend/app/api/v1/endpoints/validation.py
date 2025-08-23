@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from ....core.database import get_db
 from ....models.lender import Lender
-from ....models.integration import IntegrationSequence, Integration
+from ....models.integration import IntegrationSequence, Integration, IntegrationStatus
 from ....schemas.common import ResponseModel
 
 
@@ -27,7 +27,12 @@ async def preflight(lender_id: int, db: AsyncSession = Depends(get_db)):
     if not seq:
         return ResponseModel(message="No active sequence", data={"dns": None, "errors": ["No active sequence configured"]})
 
-    steps_result = await db.execute(select(Integration).where(Integration.parent_sequence_id == seq.id))
+    steps_result = await db.execute(
+        select(Integration).where(
+            Integration.parent_sequence_id == seq.id,
+            Integration.status != IntegrationStatus.INACTIVE
+        )
+    )
     steps = list(steps_result.scalars().all())
 
     errors = []

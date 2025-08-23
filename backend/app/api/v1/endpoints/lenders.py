@@ -10,7 +10,7 @@ from ....models.lender import Lender
 from ....schemas.lender import LenderCreate, LenderUpdate, LenderResponse, LenderList
 from ....schemas.common import ResponseModel, PaginationParams, PaginationInfo
 from ....models.field_mapping import FieldMapping, TransformationType, DataType
-from ....models.integration import IntegrationSequence, Integration, IntegrationType, AuthenticationType, IntegrationLog
+from ....models.integration import IntegrationSequence, Integration, IntegrationType, AuthenticationType, IntegrationLog, IntegrationStatus
 from sqlalchemy import delete
 from ....services.integration_runner import IntegrationRunner
 from .auth import get_current_user
@@ -417,7 +417,7 @@ async def get_integration_sequence(
         steps_result = await db.execute(
             select(Integration).where(
                 Integration.parent_sequence_id == sequence.id,
-                Integration.is_active == True
+                Integration.status != IntegrationStatus.INACTIVE
             ).order_by(Integration.sequence_order.asc())
         )
         steps = steps_result.scalars().all()
@@ -447,7 +447,7 @@ async def get_integration_sequence(
                         "request_schema": s.request_schema,
                         "depends_on_fields": s.depends_on_fields or {},
                         "output_fields": s.output_fields or [],
-                        "is_active": s.is_active,
+                        "is_active": s.status != IntegrationStatus.INACTIVE,
                         "timeout_seconds": s.timeout_seconds,
                         "retry_count": s.retry_count,
                         "retry_delay_seconds": s.retry_delay_seconds,
@@ -574,7 +574,7 @@ async def save_integration_sequence(
                 existing_integration.retry_count = step.get("retry_count", 3)
                 existing_integration.retry_delay_seconds = step.get("retry_delay_seconds", 5)
                 existing_integration.rate_limit_per_minute = step.get("rate_limit_per_minute")
-                existing_integration.is_active = True
+                existing_integration.status = IntegrationStatus.ACTIVE
             else:
                 # Create new integration
                 db.add(
@@ -598,6 +598,7 @@ async def save_integration_sequence(
                         retry_count=step.get("retry_count", 3),
                         retry_delay_seconds=step.get("retry_delay_seconds", 5),
                         rate_limit_per_minute=step.get("rate_limit_per_minute"),
+                        status=IntegrationStatus.ACTIVE,
                     )
                 )
         
@@ -612,7 +613,7 @@ async def save_integration_sequence(
                 
                 if log_count > 0:
                     # If there are logs, mark as inactive to preserve history
-                    integration.is_active = False
+                    integration.status = IntegrationStatus.INACTIVE
                 else:
                     # If no logs, safe to delete
                     await db.delete(integration)

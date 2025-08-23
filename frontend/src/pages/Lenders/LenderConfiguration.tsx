@@ -195,7 +195,9 @@ const LenderConfiguration: React.FC = () => {
 
   // Improved useEffect for integration sequence with better state synchronization
   useEffect(() => {
+    console.log('LenderConfiguration: sequenceData changed:', sequenceData);
     if (sequenceData?.data) {
+      console.log('LenderConfiguration: Setting integrationSequence to:', sequenceData.data);
       setIntegrationSequence(sequenceData.data);
       setIsDirty(false);
     }
@@ -563,12 +565,14 @@ const LenderConfiguration: React.FC = () => {
                       </button>
                     </div>
                   ) : (
-                    <SequenceBuilder
-                      lenderId={parseInt(id!)}
-                      onSequenceChange={(seq) => { setIntegrationSequence(seq); setIsDirty(true); }}
-                      initialSequence={integrationSequence || undefined}
-                      onValidityChange={(ok) => setSequenceValid(ok)}
-                    />
+                    <div>
+                      <SequenceBuilder
+                        lenderId={parseInt(id!)}
+                        onSequenceChange={(seq) => { setIntegrationSequence(seq); setIsDirty(true); }}
+                        initialSequence={sequenceData?.data || integrationSequence || undefined}
+                        onValidityChange={(ok) => setSequenceValid(ok)}
+                      />
+                    </div>
                   )}
                 </div>
               );

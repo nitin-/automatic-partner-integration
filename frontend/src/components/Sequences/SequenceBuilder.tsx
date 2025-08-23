@@ -249,12 +249,20 @@ const SequenceBuilder: React.FC<SequenceBuilderProps> = ({
     setDnsValidationStatus({});
   }, [sequence, onSequenceChange, onValidityChange]);
 
-  // Clear DNS validation statuses when initial sequence changes
+  // Update sequence when initialSequence prop changes
   useEffect(() => {
+    console.log('SequenceBuilder: initialSequence prop changed:', initialSequence);
     if (initialSequence) {
+      console.log('SequenceBuilder: Updating sequence from initialSequence prop:', initialSequence);
+      setSequence(initialSequence);
       setDnsValidationStatus({});
     }
   }, [initialSequence]);
+
+  // Debug: Log current sequence state
+  useEffect(() => {
+    console.log('SequenceBuilder: Current sequence state:', sequence);
+  }, [sequence]);
 
   const addStep = () => {
     const newStep: IntegrationStep = {

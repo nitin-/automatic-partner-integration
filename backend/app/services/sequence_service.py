@@ -373,7 +373,10 @@ class SequenceService:
         """Get steps for a sequence ordered by sequence_order"""
         result = await db.execute(
             select(Integration)
-            .where(Integration.parent_sequence_id == sequence_id)
+            .where(
+                Integration.parent_sequence_id == sequence_id,
+                Integration.status != IntegrationStatus.INACTIVE
+            )
             .order_by(Integration.sequence_order)
         )
         return result.scalars().all()

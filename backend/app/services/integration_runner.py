@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from ..models.lender import Lender
-from ..models.integration import IntegrationSequence, Integration, IntegrationLog
+from ..models.integration import IntegrationSequence, Integration, IntegrationLog, IntegrationStatus
 from ..models.field_mapping import FieldMapping
 
 
@@ -314,7 +314,7 @@ class IntegrationRunner:
         result = await db.execute(
             select(Integration).where(
                 Integration.parent_sequence_id == sequence_id,
-                Integration.is_active == True
+                Integration.status != IntegrationStatus.INACTIVE
             ).order_by(Integration.sequence_order.asc())
         )
         return list(result.scalars().all())
