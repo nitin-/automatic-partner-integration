@@ -312,7 +312,10 @@ class IntegrationRunner:
 
     async def _get_steps(self, db: AsyncSession, sequence_id: int) -> List[Integration]:
         result = await db.execute(
-            select(Integration).where(Integration.parent_sequence_id == sequence_id).order_by(Integration.sequence_order.asc())
+            select(Integration).where(
+                Integration.parent_sequence_id == sequence_id,
+                Integration.is_active == True
+            ).order_by(Integration.sequence_order.asc())
         )
         return list(result.scalars().all())
 

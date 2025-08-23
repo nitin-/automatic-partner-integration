@@ -10,7 +10,7 @@ from ....models.lender import Lender
 from ....schemas.lender import LenderCreate, LenderUpdate, LenderResponse, LenderList
 from ....schemas.common import ResponseModel, PaginationParams, PaginationInfo
 from ....models.field_mapping import FieldMapping, TransformationType, DataType
-from ....models.integration import IntegrationSequence, Integration, IntegrationType, AuthenticationType
+from ....models.integration import IntegrationSequence, Integration, IntegrationType, AuthenticationType, IntegrationLog
 from sqlalchemy import delete
 from ....services.integration_runner import IntegrationRunner
 from .auth import get_current_user
@@ -415,7 +415,10 @@ async def get_integration_sequence(
         if not sequence:
             return ResponseModel(message="No integration sequence configured", data=None)
         steps_result = await db.execute(
-            select(Integration).where(Integration.parent_sequence_id == sequence.id).order_by(Integration.sequence_order.asc())
+            select(Integration).where(
+                Integration.parent_sequence_id == sequence.id,
+                Integration.is_active == True
+            ).order_by(Integration.sequence_order.asc())
         )
         steps = steps_result.scalars().all()
         return ResponseModel(
@@ -444,7 +447,11 @@ async def get_integration_sequence(
                         "request_schema": s.request_schema,
                         "depends_on_fields": s.depends_on_fields or {},
                         "output_fields": s.output_fields or [],
-                        "is_active": True,
+                        "is_active": s.is_active,
+                        "timeout_seconds": s.timeout_seconds,
+                        "retry_count": s.retry_count,
+                        "retry_delay_seconds": s.retry_delay_seconds,
+                        "rate_limit_per_minute": s.rate_limit_per_minute,
                     }
                     for s in steps
                 ],
@@ -504,8 +511,15 @@ async def save_integration_sequence(
             sequence.retry_failed_steps = bool(sequence_payload.get("retry_failed_steps", sequence.retry_failed_steps))
             sequence.is_active = True
 
-        # Replace steps
-        await db.execute(delete(Integration).where(Integration.parent_sequence_id == sequence.id))
+        # Get existing integrations for this sequence
+        existing_integrations_result = await db.execute(
+            select(Integration).where(Integration.parent_sequence_id == sequence.id)
+        )
+        existing_integrations = {intg.id: intg for intg in existing_integrations_result.scalars().all()}
+        
+        # Track which integrations we've processed
+        processed_integration_ids = set()
+        
         for index, step in enumerate(steps):
             step_name = (step.get("name") or f"Step {index+1}").strip()
             http_method = (step.get("http_method") or "POST").upper()
@@ -533,29 +547,75 @@ async def save_integration_sequence(
             except Exception:
                 raise HTTPException(status_code=400, detail=f"Invalid auth_type for step {index+1}")
 
-            db.add(
-                Integration(
-                    lender_id=lender_id,
-                    name=step_name,
-                    description=None,
-                    integration_type=integration_type,
-                    api_endpoint=api_endpoint,
-                    http_method=http_method,
-                    sequence_order=step.get("sequence_order", index + 1),
-                    parent_sequence_id=sequence.id,
-                    is_sequence_step=True,
-                    auth_type=auth_type,
-                    auth_config=step.get("auth_config"),
-                    depends_on_fields=depends_on_fields,
-                    output_fields=step.get("output_fields", []),
-                    request_headers=step.get("request_headers"),
-                    request_schema=step.get("request_schema"),
-                    timeout_seconds=step.get("timeout_seconds", 30),
-                    retry_count=step.get("retry_count", 3),
-                    retry_delay_seconds=step.get("retry_delay_seconds", 5),
-                    rate_limit_per_minute=step.get("rate_limit_per_minute"),
+            # Check if we have an existing integration to update
+            # We'll try to match by name and sequence_order for existing steps
+            existing_integration = None
+            for existing_id, existing_intg in existing_integrations.items():
+                if (existing_intg.name == step_name and 
+                    existing_intg.sequence_order == step.get("sequence_order", index + 1)):
+                    existing_integration = existing_intg
+                    processed_integration_ids.add(existing_id)
+                    break
+            
+            if existing_integration:
+                # Update existing integration
+                existing_integration.name = step_name
+                existing_integration.integration_type = integration_type
+                existing_integration.api_endpoint = api_endpoint
+                existing_integration.http_method = http_method
+                existing_integration.sequence_order = step.get("sequence_order", index + 1)
+                existing_integration.auth_type = auth_type
+                existing_integration.auth_config = step.get("auth_config")
+                existing_integration.depends_on_fields = depends_on_fields
+                existing_integration.output_fields = step.get("output_fields", [])
+                existing_integration.request_headers = step.get("request_headers")
+                existing_integration.request_schema = step.get("request_schema")
+                existing_integration.timeout_seconds = step.get("timeout_seconds", 30)
+                existing_integration.retry_count = step.get("retry_count", 3)
+                existing_integration.retry_delay_seconds = step.get("retry_delay_seconds", 5)
+                existing_integration.rate_limit_per_minute = step.get("rate_limit_per_minute")
+                existing_integration.is_active = True
+            else:
+                # Create new integration
+                db.add(
+                    Integration(
+                        lender_id=lender_id,
+                        name=step_name,
+                        description=None,
+                        integration_type=integration_type,
+                        api_endpoint=api_endpoint,
+                        http_method=http_method,
+                        sequence_order=step.get("sequence_order", index + 1),
+                        parent_sequence_id=sequence.id,
+                        is_sequence_step=True,
+                        auth_type=auth_type,
+                        auth_config=step.get("auth_config"),
+                        depends_on_fields=depends_on_fields,
+                        output_fields=step.get("output_fields", []),
+                        request_headers=step.get("request_headers"),
+                        request_schema=step.get("request_schema"),
+                        timeout_seconds=step.get("timeout_seconds", 30),
+                        retry_count=step.get("retry_count", 3),
+                        retry_delay_seconds=step.get("retry_delay_seconds", 5),
+                        rate_limit_per_minute=step.get("rate_limit_per_minute"),
+                    )
                 )
-            )
+        
+        # Handle remaining integrations that weren't processed
+        for integration_id, integration in existing_integrations.items():
+            if integration_id not in processed_integration_ids:
+                # Check if this integration has any logs before deciding to delete or mark inactive
+                logs_result = await db.execute(
+                    select(func.count()).select_from(IntegrationLog).where(IntegrationLog.integration_id == integration_id)
+                )
+                log_count = logs_result.scalar()
+                
+                if log_count > 0:
+                    # If there are logs, mark as inactive to preserve history
+                    integration.is_active = False
+                else:
+                    # If no logs, safe to delete
+                    await db.delete(integration)
 
         await db.commit()
         return ResponseModel(message="Integration sequence saved successfully")
