@@ -529,7 +529,7 @@ async def save_integration_sequence(
                 raise HTTPException(status_code=400, detail=f"Invalid integration_type for step {index+1}")
 
             try:
-                auth_type = AuthenticationType(step.get("auth_type", "api_key"))
+                auth_type = AuthenticationType(step.get("auth_type", "none"))
             except Exception:
                 raise HTTPException(status_code=400, detail=f"Invalid auth_type for step {index+1}")
 
@@ -561,10 +561,14 @@ async def save_integration_sequence(
         return ResponseModel(message="Integration sequence saved successfully")
     except Exception as e:
         await db.rollback()
-        logger.error("Failed to save integration sequence", lender_id=lender_id, error=str(e))
+        logger.error("Failed to save integration sequence", 
+                    lender_id=lender_id, 
+                    error=str(e), 
+                    error_type=type(e).__name__,
+                    sequence_payload=sequence_payload)
         if isinstance(e, HTTPException):
             raise e
-        raise HTTPException(status_code=500, detail="Failed to save integration sequence")
+        raise HTTPException(status_code=500, detail=f"Failed to save integration sequence: {str(e)}")
 
 
 @router.post("/{lender_id}/test-integration", response_model=ResponseModel)

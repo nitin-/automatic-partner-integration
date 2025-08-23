@@ -5,21 +5,22 @@ from ..core.database import Base
 import enum
 
 
-class IntegrationType(str, enum.Enum):
-    LEAD_SUBMISSION = "lead_submission"
-    STATUS_CHECK = "status_check"
-    BULK_UPLOAD = "bulk_upload"
-    WEBHOOK = "webhook"
-    POLLING = "polling"
-    SEQUENCE = "sequence"  # Multi-step integration sequence
-
-
 class AuthenticationType(str, enum.Enum):
-    API_KEY = "api_key"
-    BEARER_TOKEN = "bearer_token"
-    BASIC_AUTH = "basic_auth"
-    OAUTH2 = "oauth2"
-    CUSTOM = "custom"
+    NONE = "NONE"
+    API_KEY = "API_KEY"
+    BEARER_TOKEN = "BEARER_TOKEN"
+    BASIC_AUTH = "BASIC_AUTH"
+    OAUTH2 = "OAUTH2"
+    CUSTOM = "CUSTOM"
+
+
+class IntegrationType(str, enum.Enum):
+    LEAD_SUBMISSION = "LEAD_SUBMISSION"
+    STATUS_CHECK = "STATUS_CHECK"
+    BULK_UPLOAD = "BULK_UPLOAD"
+    WEBHOOK = "WEBHOOK"
+    POLLING = "POLLING"
+    SEQUENCE = "SEQUENCE"  # Multi-step integration sequence
 
 
 class IntegrationStatus(str, enum.Enum):

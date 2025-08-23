@@ -129,7 +129,7 @@ class IntegrationRunner:
         # Build headers and auth
         headers: Dict[str, str] = {"Content-Type": "application/json", **(step.request_headers or {})}
         auth_cfg = step.auth_config or lender.auth_config or {}
-        auth_type = (step.auth_type.value if hasattr(step.auth_type, 'value') else step.auth_type) or "api_key"
+        auth_type = (step.auth_type.value if hasattr(step.auth_type, 'value') else step.auth_type) or "none"
         if auth_type in ("bearer_token", "bearer"):
             token = auth_cfg.get("token") or auth_cfg.get("access_token")
             if token:
@@ -147,6 +147,9 @@ class IntegrationRunner:
                 elif key_location == "body":
                     # will be merged into request body below
                     pass
+        elif auth_type in ("none", None, ""):
+            # no auth headers
+            pass
 
         # Build request body via field mappings and dependencies
         request_body: Dict[str, Any] = {}

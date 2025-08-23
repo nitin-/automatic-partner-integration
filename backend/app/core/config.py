@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     DEBUG: bool = False
     
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:password@localhost:5434/lender_framework"
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:password@localhost:5434/lender_integration"
     DATABASE_ECHO: bool = False
     
     # Security

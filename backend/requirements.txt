@@ -15,6 +15,7 @@ jinja2
 openapi-generator-cli
 pyyaml
 jsonschema
+curlparser
 pytest
 pytest-asyncio
 pytest-cov

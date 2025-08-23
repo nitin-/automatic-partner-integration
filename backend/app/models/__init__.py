@@ -1,3 +1,6 @@
+# Import Base first to ensure it's available
+from ..core.database import Base
+
 from .lender import Lender
 from .api_config import APIConfig
 from .api_template import APITemplate
@@ -8,6 +11,7 @@ from .field_mapping import FieldMapping, FieldMappingTemplate, TransformationTyp
 from .integration import Integration, IntegrationLog, IntegrationTest, IntegrationType, AuthenticationType, IntegrationStatus, IntegrationSequence
 
 __all__ = [
+    "Base",
     "Lender",
     "APIConfig", 
     "APITemplate",

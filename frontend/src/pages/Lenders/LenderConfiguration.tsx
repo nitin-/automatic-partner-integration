@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import {
@@ -64,40 +64,77 @@ const LenderConfiguration: React.FC = () => {
   const [sequenceValid, setSequenceValid] = useState(true);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
 
-  // Fetch lender data
-  const { data: lender, isLoading: lenderLoading } = useQuery(
+  // Fetch lender data with better caching and refetch options
+  const { data: lender, isLoading: lenderLoading, refetch: refetchLender, error: lenderError } = useQuery(
     ['lender', id],
     () => apiService.get<Lender>(`/lenders/${id}`),
     {
       enabled: !!id,
+      staleTime: 30000, // 30 seconds
+      cacheTime: 300000, // 5 minutes
+      refetchOnMount: true,
+      refetchOnWindowFocus: false,
+      retry: (failureCount: number, error: any) => {
+        if (error?.response?.status === 404) return false;
+        return failureCount < 3;
+      },
     }
   );
 
-  // Fetch field mappings
-  const { data: mappingsData } = useQuery(
+  // Fetch field mappings with better caching
+  const { 
+    data: mappingsData, 
+    isLoading: mappingsLoading,
+    refetch: refetchMappings,
+    error: mappingsError
+  } = useQuery(
     ['field-mappings', id],
     () => apiService.get<FieldMapping[]>(`/lenders/${id}/field-mappings`),
     {
       enabled: !!id,
+      staleTime: 10000, // 10 seconds
+      cacheTime: 300000, // 5 minutes
+      refetchOnMount: true,
+      retry: (failureCount: number, error: any) => {
+        if (error?.response?.status === 404) return false;
+        return failureCount < 3;
+      },
     }
   );
 
-  // Fetch integration sequence
-  const { data: sequenceData } = useQuery(
+  // Fetch integration sequence with better caching
+  const { 
+    data: sequenceData, 
+    isLoading: sequenceLoading,
+    refetch: refetchSequence,
+    error: sequenceError
+  } = useQuery(
     ['integration-sequence', id],
     () => apiService.get<IntegrationSequence>(`/lenders/${id}/integration-sequence`),
     {
       enabled: !!id,
+      staleTime: 10000, // 10 seconds
+      cacheTime: 300000, // 5 minutes
+      refetchOnMount: true,
+      retry: (failureCount: number, error: any) => {
+        if (error?.response?.status === 404) return false;
+        return failureCount < 3;
+      },
     }
   );
 
-  // Save field mappings mutation
+  // Save field mappings mutation with improved cache management
   const saveMappingsMutation = useMutation(
     (mappings: FieldMapping[]) => apiService.post(`/lenders/${id}/field-mappings`, { mappings }),
     {
       onSuccess: () => {
         toast.success('Field mappings saved successfully!');
+        // Invalidate and refetch related queries
         queryClient.invalidateQueries(['field-mappings', id]);
+        queryClient.invalidateQueries(['lender', id]);
+        // Refetch to ensure UI is up to date
+        refetchMappings();
+        refetchLender();
       },
       onError: (error) => {
         toast.error('Failed to save field mappings');
@@ -106,13 +143,19 @@ const LenderConfiguration: React.FC = () => {
     }
   );
 
-  // Save integration sequence mutation
+  // Save integration sequence mutation with improved cache management
   const saveSequenceMutation = useMutation(
     (sequence: IntegrationSequence) => apiService.post(`/lenders/${id}/integration-sequence`, sequence),
     {
       onSuccess: () => {
         toast.success('Integration sequence saved successfully!');
+        // Invalidate and refetch related queries
         queryClient.invalidateQueries(['integration-sequence', id]);
+        queryClient.invalidateQueries(['lender', id]);
+        // Refetch to ensure UI is up to date
+        refetchSequence();
+        refetchLender();
+        setIsDirty(false);
       },
       onError: (error) => {
         toast.error('Failed to save integration sequence');
@@ -121,7 +164,7 @@ const LenderConfiguration: React.FC = () => {
     }
   );
 
-  // Test integration mutation
+  // Test integration mutation with improved cache management
   const testIntegrationMutation = useMutation(
     (testData: any) => apiService.post(`/lenders/${id}/test-integration`, testData),
     {
@@ -129,8 +172,12 @@ const LenderConfiguration: React.FC = () => {
         toast.success('Integration test completed successfully!');
         const runId = (data?.data && (data as any).data?.run_id) || (data as any)?.data?.run_id;
         if (runId) setSelectedRunId(runId);
+        // Invalidate and refetch all related queries
         queryClient.invalidateQueries(['runs', id]);
         queryClient.invalidateQueries(['run', id, runId]);
+        queryClient.invalidateQueries(['lender', id]);
+        // Refetch to ensure UI is up to date
+        refetchLender();
       },
       onError: (error) => {
         toast.error('Integration test failed');
@@ -139,18 +186,47 @@ const LenderConfiguration: React.FC = () => {
     }
   );
 
+  // Improved useEffect for field mappings with better state synchronization
   useEffect(() => {
     if (mappingsData?.data) {
       setFieldMappings(mappingsData.data);
     }
-  }, [mappingsData]);
+  }, [mappingsData?.data]);
 
+  // Improved useEffect for integration sequence with better state synchronization
   useEffect(() => {
     if (sequenceData?.data) {
       setIntegrationSequence(sequenceData.data);
       setIsDirty(false);
     }
-  }, [sequenceData]);
+  }, [sequenceData?.data]);
+
+  // Add a manual refresh function
+  const handleRefresh = useCallback(async () => {
+    try {
+      await Promise.all([
+        refetchLender(),
+        refetchMappings(),
+        refetchSequence()
+      ]);
+      toast.success('Data refreshed successfully!');
+    } catch (error) {
+      toast.error('Failed to refresh data');
+      console.error('Refresh error:', error);
+    }
+  }, [refetchLender, refetchMappings, refetchSequence]);
+
+  // Debug function to log current state
+  const logCurrentState = useCallback(() => {
+    console.log('=== Current State Debug ===');
+    console.log('Lender:', lender?.data);
+    console.log('Field Mappings:', fieldMappings);
+    console.log('Integration Sequence:', integrationSequence);
+    console.log('Is Dirty:', isDirty);
+    console.log('Sequence Valid:', sequenceValid);
+    console.log('Loading States:', { lenderLoading, mappingsLoading, sequenceLoading });
+    console.log('==========================');
+  }, [lender?.data, fieldMappings, integrationSequence, isDirty, sequenceValid, lenderLoading, mappingsLoading, sequenceLoading]);
 
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
@@ -241,7 +317,37 @@ const LenderConfiguration: React.FC = () => {
   if (lenderLoading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-500">Loading lender configuration...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (lenderError) {
+    return (
+      <div className="text-center py-8">
+        <XCircleIcon className="mx-auto h-12 w-12 text-red-400" />
+        <h3 className="mt-2 text-sm font-medium text-gray-900">Error loading lender</h3>
+        <p className="mt-1 text-sm text-gray-500">
+          {lenderError?.response?.data?.message || lenderError?.message || 'Failed to load lender data'}
+        </p>
+        <div className="mt-6 space-x-3">
+          <button
+            onClick={() => refetchLender()}
+            className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
+          >
+            <ArrowPathIcon className="w-4 h-4 mr-2" />
+            Retry
+          </button>
+          <button
+            onClick={() => navigate('/lenders')}
+            className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
+          >
+            Back to Lenders
+          </button>
+        </div>
       </div>
     );
   }
@@ -275,7 +381,24 @@ const LenderConfiguration: React.FC = () => {
             <h1 className="text-2xl font-bold text-gray-900">{lender.data.name}</h1>
             <p className="text-gray-500">{lender.data.description}</p>
           </div>
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={handleRefresh}
+              disabled={lenderLoading || mappingsLoading || sequenceLoading}
+              className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <ArrowPathIcon className={`w-4 h-4 mr-2 ${(lenderLoading || mappingsLoading || sequenceLoading) ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
+            {process.env.NODE_ENV === 'development' && (
+              <button
+                onClick={logCurrentState}
+                className="inline-flex items-center px-3 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-600 bg-gray-50 hover:bg-gray-100"
+              >
+                <CogIcon className="w-4 h-4 mr-2" />
+                Debug
+              </button>
+            )}
             <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
               lender.data.status === 'active' 
                 ? 'bg-green-100 text-green-800' 
@@ -395,26 +518,58 @@ const LenderConfiguration: React.FC = () => {
                       <h3 className="text-lg font-medium text-gray-900">Integration Sequence</h3>
                       <p className="text-sm text-gray-500">Configure multi-step API integration sequence</p>
                     </div>
-                    <button
-                      onClick={handleSaveSequence}
-                      disabled={isSaving || !integrationSequence || !sequenceValid}
-                      className={`flex items-center space-x-1 px-4 py-2 text-sm font-medium text-white border border-transparent rounded-md ${isSaving || !integrationSequence || !sequenceValid ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'}`}
-                    >
-                      {isSaving ? (
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      ) : (
-                        <CheckCircleIcon className="w-4 h-4" />
+                    <div className="flex items-center space-x-3">
+                      {sequenceLoading && (
+                        <div className="flex items-center text-sm text-gray-500">
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                          Loading...
+                        </div>
                       )}
-                      <span>{isSaving ? 'Saving...' : 'Save Sequence'}</span>
-                    </button>
+                      <button
+                        onClick={handleSaveSequence}
+                        disabled={isSaving || !integrationSequence || !sequenceValid || sequenceLoading}
+                        className={`flex items-center space-x-1 px-4 py-2 text-sm font-medium text-white border border-transparent rounded-md ${isSaving || !integrationSequence || !sequenceValid || sequenceLoading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'}`}
+                      >
+                        {isSaving ? (
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                        ) : (
+                          <CheckCircleIcon className="w-4 h-4" />
+                        )}
+                        <span>{isSaving ? 'Saving...' : 'Save Sequence'}</span>
+                      </button>
+                    </div>
                   </div>
 
-                  <SequenceBuilder
-                    lenderId={parseInt(id!)}
-                    onSequenceChange={(seq) => { setIntegrationSequence(seq); setIsDirty(true); }}
-                    initialSequence={integrationSequence || undefined}
-                    onValidityChange={(ok) => setSequenceValid(ok)}
-                  />
+                  {sequenceLoading ? (
+                    <div className="flex items-center justify-center h-32">
+                      <div className="text-center">
+                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                        <p className="text-gray-500">Loading integration sequence...</p>
+                      </div>
+                    </div>
+                  ) : sequenceError ? (
+                    <div className="text-center py-8">
+                      <XCircleIcon className="mx-auto h-12 w-12 text-red-400" />
+                      <h3 className="mt-2 text-sm font-medium text-gray-900">Error loading sequence</h3>
+                      <p className="mt-1 text-sm text-gray-500">
+                        {sequenceError?.response?.data?.message || sequenceError?.message || 'Failed to load integration sequence'}
+                      </p>
+                      <button
+                        onClick={() => refetchSequence()}
+                        className="mt-4 inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
+                      >
+                        <ArrowPathIcon className="w-4 h-4 mr-2" />
+                        Retry
+                      </button>
+                    </div>
+                  ) : (
+                    <SequenceBuilder
+                      lenderId={parseInt(id!)}
+                      onSequenceChange={(seq) => { setIntegrationSequence(seq); setIsDirty(true); }}
+                      initialSequence={integrationSequence || undefined}
+                      onValidityChange={(ok) => setSequenceValid(ok)}
+                    />
+                  )}
                 </div>
               );
             } else if (activeTab === 'mappings') {
@@ -425,25 +580,57 @@ const LenderConfiguration: React.FC = () => {
                       <h3 className="text-lg font-medium text-gray-900">Field Mappings</h3>
                       <p className="text-sm text-gray-500">Configure how your fields map to lender fields with transformations</p>
                     </div>
-                    <button
-                      onClick={handleSaveMappings}
-                      disabled={isSaving}
-                      className="flex items-center space-x-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 disabled:opacity-50"
-                    >
-                      {isSaving ? (
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                      ) : (
-                        <CheckCircleIcon className="w-4 h-4" />
+                    <div className="flex items-center space-x-3">
+                      {mappingsLoading && (
+                        <div className="flex items-center text-sm text-gray-500">
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
+                          Loading...
+                        </div>
                       )}
-                      <span>{isSaving ? 'Saving...' : 'Save Mappings'}</span>
-                    </button>
+                      <button
+                        onClick={handleSaveMappings}
+                        disabled={isSaving || mappingsLoading}
+                        className="flex items-center space-x-1 px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {isSaving ? (
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                        ) : (
+                          <CheckCircleIcon className="w-4 h-4" />
+                        )}
+                        <span>{isSaving ? 'Saving...' : 'Save Mappings'}</span>
+                      </button>
+                    </div>
                   </div>
 
-                  <FieldMappingInterface
-                    lenderId={parseInt(id!)}
-                    onMappingChange={setFieldMappings}
-                    initialMappings={fieldMappings}
-                  />
+                  {mappingsLoading ? (
+                    <div className="flex items-center justify-center h-32">
+                      <div className="text-center">
+                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                        <p className="text-gray-500">Loading field mappings...</p>
+                      </div>
+                    </div>
+                  ) : mappingsError ? (
+                    <div className="text-center py-8">
+                      <XCircleIcon className="mx-auto h-12 w-12 text-red-400" />
+                      <h3 className="mt-2 text-sm font-medium text-gray-900">Error loading mappings</h3>
+                      <p className="mt-1 text-sm text-gray-500">
+                        {mappingsError?.response?.data?.message || mappingsError?.message || 'Failed to load field mappings'}
+                      </p>
+                      <button
+                        onClick={() => refetchMappings()}
+                        className="mt-4 inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
+                      >
+                        <ArrowPathIcon className="w-4 h-4 mr-2" />
+                        Retry
+                      </button>
+                    </div>
+                  ) : (
+                    <FieldMappingInterface
+                      lenderId={parseInt(id!)}
+                      onMappingChange={setFieldMappings}
+                      initialMappings={fieldMappings}
+                    />
+                  )}
                 </div>
               );
             } else if (activeTab === 'testing') {
