@@ -72,7 +72,8 @@ lead_integration_framework/
 │   │   └── mappers/        # Field mapping interface
 ├── generated_integrations/ # Generated API integrations
 ├── docker-compose.yml      # Development environment
-└── start.sh               # Startup script
+├── start.sh               # Startup script with credential prompting
+└── reset-docker-compose.sh # Reset script for docker-compose.yml
 ```
 
 ## 📋 **Core Entities**
@@ -176,6 +177,7 @@ Lead Data → Framework → Lender API
 git clone <repository-url>
 cd lead_integration_framework
 chmod +x start.sh
+chmod +x reset-docker-compose.sh
 ```
 
 ### **2. Start the Framework**
@@ -315,6 +317,187 @@ chmod +x start.sh
 - **Health Insurance**: Medical and personal data mapping
 - **Property Insurance**: Property and risk assessment data
 
+## 🚀 **Script Usage Examples**
+
+### **Database Credential Setup**
+
+The framework now includes interactive database credential prompting for enhanced security and flexibility.
+
+#### **Interactive Mode (Recommended)**
+```bash
+# Run the startup script
+./start.sh
+
+# The script will prompt for:
+# Enter PostgreSQL username (default: postgres): myuser
+# Enter PostgreSQL password: ********
+# Confirm PostgreSQL password: ********
+```
+
+#### **Environment Variable Mode**
+```bash
+# Set credentials via environment variables
+export DB_USERNAME=myuser
+export DB_PASSWORD=mypass
+
+# Run the startup script
+./start.sh
+
+# The script will automatically use the environment variables
+```
+
+#### **Reset to Original Configuration**
+```bash
+# If you need to reset docker-compose.yml to original state
+./reset-docker-compose.sh
+
+# This will restore the original docker-compose.yml file
+# Useful for starting over with different credentials
+```
+
+### **Practical Usage Scenarios**
+
+#### **Scenario 1: First-Time Setup**
+```bash
+# 1. Clone the repository
+git clone <repository-url>
+cd lead_integration_framework
+
+# 2. Make scripts executable
+chmod +x start.sh reset-docker-compose.sh
+
+# 3. Start with interactive credential setup
+./start.sh
+
+# 4. Follow the prompts to enter database credentials
+# 5. Wait for services to start up
+# 6. Access the application at http://localhost:3000
+```
+
+#### **Scenario 2: Production Deployment**
+```bash
+# 1. Set production credentials via environment variables
+export DB_USERNAME=prod_user
+export DB_PASSWORD=secure_prod_password
+
+# 2. Start the framework
+./start.sh
+
+# 3. The script will use production credentials automatically
+# 4. All services will be configured with production database settings
+```
+
+#### **Scenario 3: Credential Change**
+```bash
+# 1. Stop the current services
+docker-compose down
+
+# 2. Reset to original configuration
+./reset-docker-compose.sh
+
+# 3. Start with new credentials
+./start.sh
+
+# 4. Enter new database credentials when prompted
+```
+
+#### **Scenario 4: Development Team Setup**
+```bash
+# 1. Each developer can have their own credentials
+./start.sh
+
+# 2. Enter developer-specific credentials:
+# Username: dev_user_1
+# Password: dev_password_1
+
+# 3. The script will update all necessary files
+# 4. Services start with developer-specific configuration
+```
+
+### **Script Output Examples**
+
+#### **Successful Startup**
+```bash
+🚀 Starting Lender API Integration Framework...
+
+[INFO] Database Configuration Setup
+==================================
+Enter PostgreSQL username (default: postgres): myuser
+Enter PostgreSQL password: ********
+Confirm PostgreSQL password: ********
+[SUCCESS] Database credentials set successfully!
+
+[INFO] Updating docker-compose.yml with database credentials...
+[SUCCESS] docker-compose.yml updated successfully!
+
+[INFO] Creating necessary directories...
+[INFO] Building and starting services...
+[SUCCESS] PostgreSQL is ready
+[SUCCESS] Redis is ready
+[SUCCESS] Backend API is ready
+[SUCCESS] Frontend is ready
+
+🎉 Lender API Integration Framework is now running!
+
+📋 Service URLs:
+   • Frontend:     http://localhost:3000
+   • Backend API:  http://localhost:8000
+   • API Docs:     http://localhost:8000/docs
+   • Health Check: http://localhost:8000/health
+   • Flower:       http://localhost:5555
+
+🗄️  Database:
+   • PostgreSQL:   localhost:5432
+   • Username:     myuser
+   • Database:     lender_framework
+   • Redis:        localhost:6379
+```
+
+#### **Error Handling**
+```bash
+[ERROR] Passwords do not match. Please try again.
+# Script exits and allows you to run again
+
+[ERROR] PostgreSQL is not ready
+# Script exits and you can check logs with: docker-compose logs postgres
+```
+
+### **Troubleshooting Common Issues**
+
+#### **Database Connection Issues**
+```bash
+# Check if PostgreSQL container is running
+docker-compose ps postgres
+
+# View PostgreSQL logs
+docker-compose logs postgres
+
+# Check database connectivity
+docker-compose exec postgres pg_isready -U your_username
+```
+
+#### **Credential Reset Issues**
+```bash
+# If reset script fails, manually restore
+cp docker-compose.yml.backup docker-compose.yml
+
+# Or start fresh
+git checkout docker-compose.yml
+```
+
+#### **Service Startup Issues**
+```bash
+# Check all service statuses
+docker-compose ps
+
+# View logs for specific service
+docker-compose logs backend
+docker-compose logs frontend
+
+# Restart specific service
+docker-compose restart backend
+```
+
 ## 🔮 **Future Enhancements**
 
 - [ ] **AI-powered field mapping** suggestions
@@ -325,6 +508,8 @@ chmod +x start.sh
 - [ ] **Advanced analytics** and reporting
 - [ ] **Webhook support** for real-time updates
 - [ ] **Bulk data processing** capabilities
+- [ ] **Database credential encryption** for enhanced security
+- [ ] **Multi-environment configuration** support
 
 ---
 

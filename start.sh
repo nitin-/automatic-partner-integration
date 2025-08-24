@@ -31,6 +31,93 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# Function to prompt for database credentials
+prompt_database_credentials() {
+    echo ""
+    print_status "Database Configuration Setup"
+    echo "=================================="
+    
+    # Check if credentials are already set via environment variables
+    if [ ! -z "$DB_USERNAME" ] && [ ! -z "$DB_PASSWORD" ]; then
+        print_status "Using database credentials from environment variables:"
+        echo "   Username: $DB_USERNAME"
+        echo "   Password: [HIDDEN]"
+        DB_USER="$DB_USERNAME"
+        DB_PASS="$DB_PASSWORD"
+        return
+    fi
+    
+    # Prompt for username
+    while true; do
+        read -p "Enter PostgreSQL username (default: postgres): " DB_USER
+        DB_USER=${DB_USER:-postgres}
+        
+        if [[ "$DB_USER" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+            break
+        else
+            print_error "Invalid username. Username must start with a letter or underscore and contain only letters, numbers, and underscores."
+        fi
+    done
+    
+    # Prompt for password
+    while true; do
+        read -s -p "Enter PostgreSQL password: " DB_PASS
+        echo
+        
+        if [ ! -z "$DB_PASS" ]; then
+            break
+        else
+            print_error "Password cannot be empty."
+        fi
+    done
+    
+    # Confirm password
+    read -s -p "Confirm PostgreSQL password: " DB_PASS_CONFIRM
+    echo
+    
+    if [ "$DB_PASS" != "$DB_PASS_CONFIRM" ]; then
+        print_error "Passwords do not match. Please try again."
+        exit 1
+    fi
+    
+    print_success "Database credentials set successfully!"
+}
+
+# Function to update docker-compose.yml with new credentials
+update_docker_compose() {
+    print_status "Updating docker-compose.yml with database credentials..."
+    
+    # Create a backup of the original file
+    cp docker-compose.yml docker-compose.yml.backup
+    
+    # Update the docker-compose.yml file with new credentials
+    sed -i.tmp "s/POSTGRES_USER: postgres/POSTGRES_USER: $DB_USER/g" docker-compose.yml
+    sed -i.tmp "s/POSTGRES_PASSWORD: password/POSTGRES_PASSWORD: $DB_PASS/g" docker-compose.yml
+    
+    # Update the backend service DATABASE_URL
+    sed -i.tmp "s|DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/lender_framework|DATABASE_URL=postgresql+asyncpg://$DB_USER:$DB_PASS@postgres:5432/lender_framework|g" docker-compose.yml
+    
+    # Update the celery worker DATABASE_URL
+    sed -i.tmp "s|DATABASE_URL=postgresql+asyncpg://postgres:password@postgres:5432/lender_framework|DATABASE_URL=postgresql+asyncpg://$DB_USER:$DB_PASS@postgres:5432/lender_framework|g" docker-compose.yml
+    
+    # Remove temporary files
+    rm -f docker-compose.yml.tmp
+    
+    print_success "docker-compose.yml updated successfully!"
+}
+
+# Function to restore docker-compose.yml from backup
+restore_docker_compose() {
+    if [ -f "docker-compose.yml.backup" ]; then
+        print_status "Restoring docker-compose.yml from backup..."
+        mv docker-compose.yml.backup docker-compose.yml
+        print_success "docker-compose.yml restored from backup"
+    fi
+}
+
+# Set up cleanup on script exit
+trap restore_docker_compose EXIT
+
 # Check if Docker is installed
 if ! command -v docker &> /dev/null; then
     print_error "Docker is not installed. Please install Docker first."
@@ -42,6 +129,12 @@ if ! command -v docker-compose &> /dev/null; then
     print_error "Docker Compose is not installed. Please install Docker Compose first."
     exit 1
 fi
+
+# Prompt for database credentials
+prompt_database_credentials
+
+# Update docker-compose.yml with new credentials
+update_docker_compose
 
 # Create necessary directories
 print_status "Creating necessary directories..."
@@ -56,12 +149,12 @@ if [ ! -f "frontend/package-lock.json" ]; then
     print_success "Frontend dependencies installed"
 fi
 
-# Check if .env file exists
+# Check if .env file exists and update it with new credentials
 if [ ! -f "backend/.env" ]; then
     print_warning ".env file not found. Creating default .env file..."
     cat > backend/.env << EOF
 # Database Configuration
-DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/lender_framework
+DATABASE_URL=postgresql+asyncpg://$DB_USER:$DB_PASS@localhost:5432/lender_framework
 
 # Redis Configuration
 REDIS_URL=redis://localhost:6379/0
@@ -88,7 +181,13 @@ UPLOAD_DIR=uploads
 GENERATED_APIS_DIR=generated_apis
 TEMPLATES_DIR=api_templates
 EOF
-    print_success "Created default .env file"
+    print_success "Created default .env file with new database credentials"
+else
+    # Update existing .env file with new database credentials
+    print_status "Updating existing .env file with new database credentials..."
+    sed -i.tmp "s|DATABASE_URL=postgresql+asyncpg://.*@localhost:5432/lender_framework|DATABASE_URL=postgresql+asyncpg://$DB_USER:$DB_PASS@localhost:5432/lender_framework|g" backend/.env
+    rm -f backend/.env.tmp
+    print_success "Updated .env file with new database credentials"
 fi
 
 # Stop any existing containers
@@ -106,8 +205,8 @@ sleep 30
 # Check if services are running
 print_status "Checking service status..."
 
-# Check PostgreSQL
-if docker-compose exec -T postgres pg_isready -U postgres > /dev/null 2>&1; then
+# Check PostgreSQL with new credentials
+if docker-compose exec -T postgres pg_isready -U "$DB_USER" > /dev/null 2>&1; then
     print_success "PostgreSQL is ready"
 else
     print_error "PostgreSQL is not ready"
@@ -150,6 +249,9 @@ else
     fi
 fi
 
+# Remove the exit trap since we're successful
+trap - EXIT
+
 # Display service URLs
 echo ""
 print_success "🎉 Lender API Integration Framework is now running!"
@@ -163,6 +265,8 @@ echo "   • Flower:       http://localhost:5555"
 echo ""
 echo "🗄️  Database:"
 echo "   • PostgreSQL:   localhost:5432"
+echo "   • Username:     $DB_USER"
+echo "   • Database:     lender_framework"
 echo "   • Redis:        localhost:6379"
 echo ""
 echo "🔧 Management Commands:"
