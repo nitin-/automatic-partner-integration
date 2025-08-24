@@ -63,7 +63,7 @@ const LenderConfiguration: React.FC = () => {
   const [integrationSequence, setIntegrationSequence] = useState<IntegrationSequence | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
-  const [sequenceValid, setSequenceValid] = useState(true);
+  const [sequenceValid] = useState(true);
 
 
   // Fetch lender data with better caching and refetch options
@@ -108,8 +108,7 @@ const LenderConfiguration: React.FC = () => {
   const { 
     data: sequenceData, 
     isLoading: sequenceLoading,
-    refetch: refetchSequence,
-    error: sequenceError
+    refetch: refetchSequence
   } = useQuery(
     ['integration-sequence', id],
     () => apiService.get<IntegrationSequence>(`/lenders/${id}/integration-sequence`),
@@ -145,26 +144,7 @@ const LenderConfiguration: React.FC = () => {
     }
   );
 
-  // Save integration sequence mutation with improved cache management
-  const saveSequenceMutation = useMutation(
-    (sequence: IntegrationSequence) => apiService.post(`/lenders/${id}/integration-sequence`, sequence),
-    {
-      onSuccess: () => {
-        toast.success('Integration sequence saved successfully!');
-        // Invalidate and refetch related queries
-        queryClient.invalidateQueries(['integration-sequence', id]);
-        queryClient.invalidateQueries(['lender', id]);
-        // Refetch to ensure UI is up to date
-        refetchSequence();
-        refetchLender();
-        setIsDirty(false);
-      },
-      onError: (error: any) => {
-        toast.error('Failed to save integration sequence');
-        console.error('Save sequence error:', error);
-      },
-    }
-  );
+
 
 
 
@@ -183,7 +163,7 @@ const LenderConfiguration: React.FC = () => {
       setIntegrationSequence(sequenceData.data);
       setIsDirty(false);
     }
-  }, [sequenceData?.data]);
+  }, [sequenceData]);
 
   // Add a manual refresh function
   const handleRefresh = useCallback(async () => {
@@ -232,17 +212,7 @@ const LenderConfiguration: React.FC = () => {
     }
   };
 
-  const handleSaveSequence = async () => {
-    if (!integrationSequence) return;
-    
-    setIsSaving(true);
-    try {
-      await saveSequenceMutation.mutateAsync(integrationSequence);
-      setIsDirty(false);
-    } finally {
-      setIsSaving(false);
-    }
-  };
+
 
 
 
@@ -253,9 +223,7 @@ const LenderConfiguration: React.FC = () => {
     // Fetch deployed APIs from database
     const { 
       data: deployedApisData, 
-      isLoading: deployedApisLoading,
-      refetch: refetchDeployedApis,
-      error: deployedApisError
+      refetch: refetchDeployedApis
     } = useQuery(
       ['deployed-apis', id],
       () => apiService.get<Array<{ 
@@ -284,9 +252,7 @@ const LenderConfiguration: React.FC = () => {
     // Fetch integration deployment from database
     const { 
       data: integrationDeploymentData, 
-      isLoading: integrationDeploymentLoading,
-      refetch: refetchIntegrationDeployment,
-      error: integrationDeploymentError
+      refetch: refetchIntegrationDeployment
     } = useQuery(
       ['integration-deployment', id],
       () => apiService.get<{

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   PlusIcon,
   PencilIcon,
@@ -61,7 +61,7 @@ const SequencesManager: React.FC<SequencesManagerProps> = ({ lenderId }) => {
   const [isDeleting, setIsDeleting] = useState(false);
 
   // Load sequences
-  const loadSequences = async () => {
+  const loadSequences = useCallback(async () => {
     try {
       setIsLoading(true);
       const response = await apiService.get<IntegrationSequence[]>(`/lenders/${lenderId}/integration-sequences`);
@@ -77,11 +77,11 @@ const SequencesManager: React.FC<SequencesManagerProps> = ({ lenderId }) => {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [lenderId]);
 
   useEffect(() => {
     loadSequences();
-  }, [lenderId]);
+  }, [lenderId, loadSequences]);
 
   // Create new sequence
   const handleCreateSequence = async (sequence: IntegrationSequence) => {
