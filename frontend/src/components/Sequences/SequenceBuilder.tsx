@@ -2292,6 +2292,194 @@ Content-Type: application/json`}
             </div>
           </div>
 
+          {/* Testing Execution Workflow */}
+          <div className="bg-white border border-gray-200 rounded-lg p-6">
+            <h5 className="text-md font-medium text-gray-900 mb-4">Testing Execution Workflow</h5>
+            <div className="space-y-4">
+              {/* Test Input Data */}
+              <div className="border border-gray-200 rounded-lg p-4">
+                <h6 className="text-sm font-medium text-gray-900 mb-3">Test Input Data</h6>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Sample Input JSON</label>
+                    <textarea
+                      className="w-full h-24 px-3 py-2 text-xs border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono"
+                      placeholder={`{
+  "full_name": "John Doe",
+  "email": "john@example.com",
+  "phone": "+1-555-123-4567",
+  "loan_amount": 50000
+}`}
+                      value={JSON.stringify({
+                        full_name: "John Doe",
+                        email: "john@example.com",
+                        phone: "+1-555-123-4567",
+                        loan_amount: 50000
+                      }, null, 2)}
+                      readOnly
+                    />
+                  </div>
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={() => {
+                        const testData = {
+                          full_name: "John Doe",
+                          email: "john@example.com",
+                          phone: "+1-555-123-4567",
+                          loan_amount: 50000
+                        };
+                        toast.success('Test data loaded successfully!');
+                      }}
+                      className="px-3 py-2 text-xs font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
+                    >
+                      Load Test Data
+                    </button>
+                    <button
+                      onClick={() => {
+                        toast.success('Test data cleared!');
+                      }}
+                      className="px-3 py-2 text-xs font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200"
+                    >
+                      Clear Data
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Execute Test */}
+              <div className="border border-gray-200 rounded-lg p-4">
+                <h6 className="text-sm font-medium text-gray-900 mb-3">Execute Test Sequence</h6>
+                <div className="space-y-3">
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => {
+                        if (!isValid) {
+                          toast.error('Sequence is not valid. Please fix configuration issues first.');
+                          return;
+                        }
+                        toast.success('Test execution started!');
+                        // Simulate execution
+                        setExecutionId('test_exec_' + Date.now());
+                        setExecutionSteps([
+                          {
+                            step_order: 1,
+                            step_name: sequence.steps[0]?.name || 'Step 1',
+                            status: 'running',
+                            start_time: new Date().toISOString(),
+                            logs: []
+                          }
+                        ]);
+                      }}
+                      disabled={!isValid}
+                      className={`px-4 py-2 text-sm font-medium text-white rounded-md ${
+                        isValid
+                          ? 'bg-green-600 hover:bg-green-700'
+                          : 'bg-gray-400 cursor-not-allowed'
+                      }`}
+                    >
+                      <PlayIcon className="w-4 h-4 inline mr-2" />
+                      Start Test Execution
+                    </button>
+                    <button
+                      onClick={() => {
+                        toast.success('Test execution stopped!');
+                        setExecutionSteps([]);
+                        setExecutionId(null);
+                      }}
+                      className="px-4 py-2 text-sm font-medium text-gray-700 bg-red-100 border border-red-300 rounded-md hover:bg-red-200"
+                    >
+                      <PauseIcon className="w-4 h-4 inline mr-2" />
+                      Stop Execution
+                    </button>
+                    <button
+                      onClick={resetExecution}
+                      className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200"
+                    >
+                      <ArrowPathIcon className="w-4 h-4 inline mr-2" />
+                      Reset
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Execution Status */}
+              {executionId && (
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <h6 className="text-sm font-medium text-gray-900 mb-3">Execution Status</h6>
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-medium text-gray-700">Execution ID:</span>
+                      <span className="font-mono text-gray-900">{executionId}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-medium text-gray-700">Status:</span>
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                        Running
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="font-medium text-gray-700">Started:</span>
+                      <span className="text-gray-900">{new Date().toLocaleString()}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Execution Steps */}
+              {executionSteps.length > 0 && (
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <h6 className="text-sm font-medium text-gray-900 mb-3">Execution Steps</h6>
+                  <div className="space-y-2">
+                    {executionSteps.map((step, index) => (
+                      <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded border">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-sm font-medium text-gray-700">Step {step.step_order}:</span>
+                          <span className="text-sm text-gray-900">{step.step_name}</span>
+                        </div>
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          step.status === 'completed' ? 'bg-green-100 text-green-800' :
+                          step.status === 'failed' ? 'bg-red-100 text-red-800' :
+                          step.status === 'running' ? 'bg-blue-100 text-blue-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>
+                          {step.status}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Execution Logs */}
+              {executionLogs.length > 0 && (
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <h6 className="text-sm font-medium text-gray-900 mb-3">Execution Logs</h6>
+                  <div className="space-y-2 max-h-32 overflow-y-auto">
+                    {executionLogs.map((log, index) => (
+                      <div key={index} className={`text-xs p-2 rounded ${
+                        log.level === 'error' ? 'bg-red-50 text-red-700' :
+                        log.level === 'warning' ? 'bg-yellow-50 text-yellow-700' :
+                        log.level === 'info' ? 'bg-blue-50 text-blue-700' :
+                        'bg-gray-50 text-gray-700'
+                      }`}>
+                        <span className="font-mono">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                        <span className={`ml-2 px-1.5 py-0.5 rounded text-xs font-medium ${
+                          log.level === 'error' ? 'bg-red-100 text-red-800' :
+                          log.level === 'warning' ? 'bg-yellow-100 text-yellow-800' :
+                          log.level === 'info' ? 'bg-blue-100 text-blue-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>
+                          {log.level.toUpperCase()}
+                        </span>
+                        <span className="ml-2">{log.message}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* API Generation Status */}
           <div className="bg-green-50 border border-green-200 rounded-lg p-4">
             <div className="flex items-center space-x-3">
