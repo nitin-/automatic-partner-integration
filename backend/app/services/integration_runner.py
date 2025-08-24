@@ -66,10 +66,18 @@ class IntegrationRunner:
         lender_id: int,
         input_payload: Dict[str, Any],
         mode: str = "test",
+        sequence_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         run_id = str(uuid.uuid4())
         lender = await self._get_lender(db, lender_id)
-        sequence = await self._get_active_sequence(db, lender_id)
+        
+        if sequence_id:
+            # Run specific sequence
+            sequence = await self._get_sequence_by_id(db, sequence_id, lender_id)
+        else:
+            # Run first active sequence (backward compatibility)
+            sequence = await self._get_active_sequence(db, lender_id)
+            
         if not sequence:
             return {"status": "no_sequence", "steps": [], "run_id": run_id}
 
@@ -306,6 +314,16 @@ class IntegrationRunner:
             select(IntegrationSequence).where(
                 IntegrationSequence.lender_id == lender_id,
                 IntegrationSequence.is_active == True,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def _get_sequence_by_id(self, db: AsyncSession, sequence_id: int, lender_id: int) -> Optional[IntegrationSequence]:
+        """Get a specific sequence by ID for a lender"""
+        result = await db.execute(
+            select(IntegrationSequence).where(
+                IntegrationSequence.id == sequence_id,
+                IntegrationSequence.lender_id == lender_id,
             )
         )
         return result.scalar_one_or_none()

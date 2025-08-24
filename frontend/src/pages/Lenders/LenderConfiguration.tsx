@@ -13,7 +13,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { apiService } from '../../services/api';
 import FieldMappingInterface from '../../components/FieldMapping/FieldMappingInterface';
-import SequenceBuilder from '../../components/Sequences/SequenceBuilder';
+import SequencesManager from '../../components/Sequences/SequencesManager';
 import toast from 'react-hot-toast';
 
 interface Lender {
@@ -828,7 +828,7 @@ const LenderConfiguration: React.FC = () => {
 
   const tabs = [
     { id: 'overview', name: 'Overview', icon: BuildingOfficeIcon },
-    { id: 'sequences', name: 'Integration Sequences', icon: ArrowPathIcon },
+    { id: 'sequences', name: 'Sequences', icon: ArrowPathIcon },
     { id: 'mappings', name: 'Field Mappings', icon: CogIcon },
     { id: 'deploy', name: 'Deploy', icon: CloudArrowUpIcon },
   ];
@@ -1034,63 +1034,12 @@ const LenderConfiguration: React.FC = () => {
                 <div className="space-y-6">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h3 className="text-lg font-medium text-gray-900">Integration Sequence</h3>
-                      <p className="text-sm text-gray-500">Configure multi-step API integration sequence</p>
-                    </div>
-                    <div className="flex items-center space-x-3">
-                      {sequenceLoading && (
-                        <div className="flex items-center text-sm text-gray-500">
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
-                          Loading...
-                        </div>
-                      )}
-                      <button
-                        onClick={handleSaveSequence}
-                        disabled={isSaving || !integrationSequence || !sequenceValid || sequenceLoading}
-                        className={`flex items-center space-x-1 px-4 py-2 text-sm font-medium text-white border border-transparent rounded-md ${isSaving || !integrationSequence || !sequenceValid || sequenceLoading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'}`}
-                      >
-                        {isSaving ? (
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                        ) : (
-                          <CheckCircleIcon className="w-4 h-4" />
-                        )}
-                        <span>{isSaving ? 'Saving...' : 'Save Sequence'}</span>
-                      </button>
+                      <h3 className="text-lg font-medium text-gray-900">Integration Sequences</h3>
+                      <p className="text-sm text-gray-500">Manage multiple integration sequences for this lender</p>
                     </div>
                   </div>
 
-                  {sequenceLoading ? (
-                    <div className="flex items-center justify-center h-32">
-                      <div className="text-center">
-                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto mb-2"></div>
-                        <p className="text-gray-500">Loading integration sequence...</p>
-                      </div>
-                    </div>
-                  ) : sequenceError ? (
-                    <div className="text-center py-8">
-                      <XCircleIcon className="mx-auto h-12 w-12 text-red-400" />
-                      <h3 className="mt-2 text-sm font-medium text-gray-900">Error loading sequence</h3>
-                      <p className="mt-1 text-sm text-gray-500">
-                        {sequenceError?.response?.data?.message || sequenceError?.message || 'Failed to load integration sequence'}
-                      </p>
-                      <button
-                        onClick={() => refetchSequence()}
-                        className="mt-4 inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
-                      >
-                        <ArrowPathIcon className="w-4 h-4 mr-2" />
-                        Retry
-                      </button>
-                    </div>
-                  ) : (
-                    <div>
-                      <SequenceBuilder
-                        lenderId={parseInt(id!)}
-                        onSequenceChange={(seq) => { setIntegrationSequence(seq); setIsDirty(true); }}
-                        initialSequence={sequenceData?.data || integrationSequence || undefined}
-                        onValidityChange={(ok) => setSequenceValid(ok)}
-                      />
-                    </div>
-                  )}
+                  <SequencesManager lenderId={parseInt(id!)} />
                 </div>
               );
             } else if (activeTab === 'mappings') {

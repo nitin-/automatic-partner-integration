@@ -272,7 +272,6 @@ const SequenceBuilder: React.FC<SequenceBuilderProps> = ({
   };
 
   useEffect(() => {
-    onSequenceChange(sequence);
     const ok = validateSequence(sequence);
     setIsValid(ok);
     if (onValidityChange) onValidityChange(ok);
@@ -292,7 +291,7 @@ const SequenceBuilder: React.FC<SequenceBuilderProps> = ({
     
     // Clear DNS validation statuses when sequence changes
     setDnsValidationStatus({});
-  }, [sequence, onSequenceChange, onValidityChange]);
+  }, [sequence, onValidityChange]);
 
   // Update sequence when initialSequence prop changes
   useEffect(() => {
@@ -1225,6 +1224,16 @@ const SequenceBuilder: React.FC<SequenceBuilderProps> = ({
               {isValid ? 'Sequence is valid' : 'Sequence needs configuration'}
             </span>
           </div>
+          <button
+            onClick={() => onSequenceChange(sequence)}
+            disabled={!isValid}
+            className={`flex items-center space-x-2 px-4 py-2 text-sm font-medium text-white border border-transparent rounded-md ${
+              isValid ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-400 cursor-not-allowed'
+            }`}
+          >
+            <CheckCircleIcon className="w-4 h-4" />
+            <span>Save Sequence</span>
+          </button>
         </div>
       </div>
 
