@@ -8,6 +8,15 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   GlobeAltIcon,
+  CheckCircleIcon,
+  XCircleIcon,
+  ClockIcon,
+  ExclamationTriangleIcon,
+  InformationCircleIcon,
+  EyeIcon,
+  DocumentTextIcon,
+  CodeBracketIcon,
+  ArrowRightIcon,
 } from '@heroicons/react/24/outline';
 import { apiService } from '../../services/api';
 import toast from 'react-hot-toast';
@@ -43,6 +52,27 @@ interface IntegrationSequence {
   retry_failed_steps: boolean;
   is_active: boolean;
   steps: IntegrationStep[];
+}
+
+interface ExecutionStep {
+  step_order: number;
+  step_name: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+  start_time?: string;
+  end_time?: string;
+  duration_ms?: number;
+  request_data?: any;
+  response_data?: any;
+  error_message?: string;
+  retry_count?: number;
+  logs: ExecutionLog[];
+}
+
+interface ExecutionLog {
+  timestamp: string;
+  level: 'info' | 'warning' | 'error' | 'debug';
+  message: string;
+  data?: any;
 }
 
 interface SequenceBuilderProps {
@@ -87,6 +117,21 @@ const SequenceBuilder: React.FC<SequenceBuilderProps> = ({
   const [templateText, setTemplateText] = useState<Record<number, string>>({});
   const [templateError, setTemplateError] = useState<Record<number, string | undefined>>({});
   const [dnsValidationStatus, setDnsValidationStatus] = useState<Record<number, { loading: boolean; valid: boolean; message: string }>>({});
+  
+  // Testing tab state
+  const [activeTab, setActiveTab] = useState<'builder' | 'testing'>('builder');
+  const [executionSteps, setExecutionSteps] = useState<ExecutionStep[]>([]);
+  const [isExecuting, setIsExecuting] = useState(false);
+  const [executionId, setExecutionId] = useState<string | null>(null);
+  const [testData, setTestData] = useState({
+    full_name: 'John Doe',
+    email: 'john@example.com',
+    phone: '+1-555-123-4567',
+    loan_amount: '50000'
+  });
+  const [showTestDataModal, setShowTestDataModal] = useState(false);
+  const [executionLogs, setExecutionLogs] = useState<ExecutionLog[]>([]);
+  const [selectedStepForDetails, setSelectedStepForDetails] = useState<number | null>(null);
 
   const allowedHttpMethods = useMemo(() => new Set(['GET','POST','PUT','PATCH','DELETE']), []);
 
@@ -719,25 +764,418 @@ const SequenceBuilder: React.FC<SequenceBuilderProps> = ({
   };
 
   const testSequence = async () => {
+    if (!isValid) {
+      toast.error('Please fix validation errors before testing');
+      return;
+    }
+
     try {
-      const testData = {
-        full_name: 'John Doe',
-        email: 'john@example.com',
-        phone: '+1-555-123-4567',
-        loan_amount: '50000'
-      };
+      setIsExecuting(true);
+      setExecutionId(null);
+      setExecutionSteps([]);
+      setExecutionLogs([]);
+      
+      // Initialize execution steps
+      const initialSteps: ExecutionStep[] = sequence.steps.map((step, index) => ({
+        step_order: step.sequence_order,
+        step_name: step.name || `Step ${step.sequence_order}`,
+        status: 'pending',
+        logs: []
+      }));
+      setExecutionSteps(initialSteps);
 
-      const response = await apiService.post(`/lenders/${lenderId}/test-integration`, {
-        sequence_id: sequence.id,
-        test_data: testData
-      });
+      // Add initial log
+      addExecutionLog('info', 'Starting sequence execution', { sequence_name: sequence.name, steps_count: sequence.steps.length });
 
-      toast.success('Sequence test completed successfully!');
-      console.log('Test result:', response.data);
+      // Track accumulated data from previous steps
+      let accumulatedData: Record<string, any> = { ...testData };
+      
+      // Execute steps sequentially
+      for (let i = 0; i < sequence.steps.length; i++) {
+        const step = sequence.steps[i];
+        
+        // Update step status to running
+        updateExecutionStep(i, { status: 'running', start_time: new Date().toISOString() });
+        
+        // Build request payload using accumulated data and step configuration
+        const requestPayload = buildRequestPayload(step, accumulatedData, i);
+        
+        addExecutionLog('info', `Executing ${step.name || `Step ${step.sequence_order}`}`, { 
+          step_order: step.sequence_order,
+          api_endpoint: step.api_endpoint,
+          http_method: step.http_method,
+          request_payload: requestPayload
+        });
+
+        try {
+          // Make actual API call
+          const startTime = Date.now();
+          const response = await executeApiCall(step, requestPayload);
+          const duration = Date.now() - startTime;
+          
+          if (response.success) {
+            // Extract output fields and add to accumulated data
+            const extractedData = extractOutputFields(step, response.data);
+            accumulatedData = { ...accumulatedData, ...extractedData };
+            
+            // Log data flow
+            if (Object.keys(extractedData).length > 0) {
+              addExecutionLog('info', `Step ${step.sequence_order} extracted data for next steps`, {
+                step_order: step.sequence_order,
+                extracted_fields: extractedData,
+                accumulated_data: accumulatedData
+              });
+            }
+            
+            updateExecutionStep(i, { 
+              status: 'completed', 
+              end_time: new Date().toISOString(),
+              request_data: requestPayload,
+              response_data: response.data,
+              duration_ms: duration
+            });
+            
+            addExecutionLog('info', `Step ${step.sequence_order} completed successfully`, {
+              step_order: step.sequence_order,
+              response: response.data,
+              data_flow: {
+                extracted: extractedData,
+                available_for_next_steps: Object.keys(accumulatedData)
+              }
+            });
+          } else {
+            // Handle API error
+            updateExecutionStep(i, { 
+              status: 'failed', 
+              end_time: new Date().toISOString(),
+              request_data: requestPayload,
+              error_message: response.error || 'API call failed',
+              duration_ms: Date.now() - startTime
+            });
+            
+            addExecutionLog('error', `Step ${step.sequence_order} failed: ${response.error}`, { 
+              step_order: step.sequence_order,
+              request_payload: requestPayload,
+              error_details: response.errorDetails
+            });
+            
+            if (sequence.stop_on_error) {
+              addExecutionLog('warning', 'Sequence execution stopped due to step failure', { 
+                step_order: step.sequence_order,
+                accumulated_data: accumulatedData
+              });
+              break;
+            }
+          }
+        } catch (error) {
+          const startTime = executionSteps[i]?.start_time;
+          const duration = startTime ? Date.now() - new Date(startTime).getTime() : 0;
+          
+          updateExecutionStep(i, { 
+            status: 'failed', 
+            end_time: new Date().toISOString(),
+            request_data: requestPayload,
+            error_message: error instanceof Error ? error.message : 'Unknown error',
+            duration_ms: duration
+          });
+          
+          addExecutionLog('error', `Step ${step.sequence_order} failed with exception`, { 
+            step_order: step.sequence_order, 
+            error: error instanceof Error ? error.message : 'Unknown error',
+            request_payload: requestPayload
+          });
+          
+          if (sequence.stop_on_error) {
+            addExecutionLog('warning', 'Sequence execution stopped due to step failure', { 
+              step_order: step.sequence_order,
+              accumulated_data: accumulatedData
+            });
+            break;
+          }
+        }
+      }
+
+      // Final execution log
+      const completedSteps = executionSteps.filter(step => step.status === 'completed').length;
+      const failedSteps = executionSteps.filter(step => step.status === 'failed').length;
+      
+      if (failedSteps === 0) {
+        addExecutionLog('info', 'Sequence execution completed successfully', { 
+          total_steps: sequence.steps.length, 
+          completed_steps: completedSteps,
+          final_accumulated_data: accumulatedData
+        });
+        toast.success('Sequence test completed successfully!');
+      } else {
+        addExecutionLog('warning', 'Sequence execution completed with failures', { 
+          total_steps: sequence.steps.length, 
+          completed_steps: completedSteps, 
+          failed_steps: failedSteps,
+          accumulated_data: accumulatedData
+        });
+        toast.error(`Sequence test completed with ${failedSteps} failures`);
+      }
+      
+      setIsExecuting(false);
+      setExecutionId(`exec_${Date.now()}`);
+      
     } catch (error) {
+      setIsExecuting(false);
+      addExecutionLog('error', 'Sequence execution failed', { error: error instanceof Error ? error.message : 'Unknown error' });
       toast.error('Sequence test failed');
       console.error('Test error:', error);
     }
+  };
+
+  // Execute actual API call based on step configuration
+  const executeApiCall = async (step: IntegrationStep, payload: any) => {
+    try {
+      const startTime = Date.now();
+      
+      // Prepare headers
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        ...(step.request_headers || {})
+      };
+      
+      // Add authentication headers
+      if (step.auth_type === 'API_KEY' && step.auth_config?.key_name && step.auth_config?.key_value) {
+        if (step.auth_config.key_location === 'header') {
+          headers[step.auth_config.key_name] = step.auth_config.key_value;
+        }
+      } else if (step.auth_type === 'BEARER_TOKEN' && step.auth_config?.token) {
+        headers['Authorization'] = `Bearer ${step.auth_config.token}`;
+      } else if (step.auth_type === 'BASIC_AUTH' && step.auth_config?.username && step.auth_config?.password) {
+        const credentials = btoa(`${step.auth_config.username}:${step.auth_config.password}`);
+        headers['Authorization'] = `Basic ${credentials}`;
+      }
+      
+      // Prepare request options
+      const requestOptions: RequestInit = {
+        method: step.http_method,
+        headers,
+        mode: 'cors',
+        cache: 'no-cache',
+        credentials: 'same-origin',
+        redirect: 'follow',
+        referrerPolicy: 'no-referrer'
+      };
+      
+      // Add body for non-GET requests
+      if (step.http_method !== 'GET' && payload && Object.keys(payload).length > 0) {
+        requestOptions.body = JSON.stringify(payload);
+      }
+      
+      // Add query parameters for GET requests
+      let url = step.api_endpoint;
+      if (step.http_method === 'GET' && payload && Object.keys(payload).length > 0) {
+        const urlObj = new URL(url.startsWith('http') ? url : `http://localhost${url}`);
+        Object.entries(payload).forEach(([key, value]) => {
+          if (value !== undefined && value !== null && value !== '') {
+            urlObj.searchParams.append(key, String(value));
+          }
+        });
+        url = urlObj.toString();
+      }
+      
+      // Make the actual API call
+      const response = await fetch(url, requestOptions);
+      const responseText = await response.text();
+      
+      // Parse response
+      let responseData: any;
+      try {
+        responseData = responseText ? JSON.parse(responseText) : {};
+      } catch (parseError) {
+        responseData = { raw_response: responseText };
+      }
+      
+      // Add metadata to response
+      const enrichedResponse = {
+        ...responseData,
+        _metadata: {
+          status: response.status,
+          statusText: response.statusText,
+          headers: Object.fromEntries(response.headers.entries()),
+          url: url,
+          method: step.http_method,
+          request_payload: payload,
+          response_time_ms: Date.now() - startTime,
+          timestamp: new Date().toISOString()
+        }
+      };
+      
+      // Check if response indicates success
+      if (response.ok) {
+        return {
+          success: true,
+          data: enrichedResponse,
+          error: null,
+          errorDetails: null
+        };
+      } else {
+        return {
+          success: false,
+          data: enrichedResponse,
+          error: `HTTP ${response.status}: ${response.statusText}`,
+          errorDetails: {
+            status: response.status,
+            statusText: response.statusText,
+            response_data: enrichedResponse
+          }
+        };
+      }
+      
+    } catch (error) {
+      return {
+        success: false,
+        data: null,
+        error: error instanceof Error ? error.message : 'Network error',
+        errorDetails: {
+          error_type: 'network',
+          error_message: error instanceof Error ? error.message : 'Unknown error',
+          timestamp: new Date().toISOString()
+        }
+      };
+    }
+  };
+
+  // Build request payload using accumulated data and step configuration
+  const buildRequestPayload = (step: IntegrationStep, accumulatedData: Record<string, any>, stepIndex: number) => {
+    let payload: any = {};
+    
+    // Start with test data
+    payload = { ...testData };
+    
+    // Add step-specific configuration
+    if (step.request_schema?.template) {
+      payload = { ...payload, ...step.request_schema.template };
+    }
+    
+    // Add query parameters
+    if (step.request_schema?.query_params) {
+      payload = { ...payload, ...step.request_schema.query_params };
+    }
+    
+    // Process dependencies from previous steps
+    if (step.depends_on_fields && Object.keys(step.depends_on_fields).length > 0) {
+      Object.entries(step.depends_on_fields).forEach(([targetField, sourceField]) => {
+        if (sourceField && accumulatedData[sourceField] !== undefined) {
+          payload[targetField] = accumulatedData[sourceField];
+        }
+      });
+    }
+    
+    // Add step metadata
+    payload.step_order = step.sequence_order;
+    payload.step_name = step.name;
+    payload.execution_timestamp = new Date().toISOString();
+    
+    return payload;
+  };
+
+
+
+  // Extract output fields from response based on step configuration
+  const extractOutputFields = (step: IntegrationStep, response: any): Record<string, any> => {
+    const extracted: Record<string, any> = {};
+    
+    if (!step.output_fields || step.output_fields.length === 0) {
+      return extracted;
+    }
+    
+    step.output_fields.forEach(fieldPath => {
+      if (!fieldPath || !fieldPath.trim()) return;
+      
+      try {
+        // Simple JSON path extraction (supports basic $.field.subfield syntax)
+        if (fieldPath.startsWith('$.')) {
+          const pathParts = fieldPath.substring(2).split('.');
+          let value = response;
+          
+          for (const part of pathParts) {
+            if (value && typeof value === 'object' && part in value) {
+              value = value[part];
+            } else {
+              value = undefined;
+              break;
+            }
+          }
+          
+          if (value !== undefined) {
+            const fieldName = pathParts[pathParts.length - 1];
+            extracted[fieldName] = value;
+          }
+        }
+      } catch (error) {
+        console.warn(`Failed to extract field ${fieldPath}:`, error);
+      }
+    });
+    
+    return extracted;
+  };
+
+  const updateExecutionStep = (index: number, updates: Partial<ExecutionStep>) => {
+    setExecutionSteps(prev => prev.map((step, i) => 
+      i === index ? { ...step, ...updates } : step
+    ));
+  };
+
+  const addExecutionLog = (level: ExecutionLog['level'], message: string, data?: any) => {
+    const log: ExecutionLog = {
+      timestamp: new Date().toISOString(),
+      level,
+      message,
+      data
+    };
+    setExecutionLogs(prev => [...prev, log]);
+  };
+
+  const resetExecution = () => {
+    setExecutionSteps([]);
+    setExecutionLogs([]);
+    setExecutionId(null);
+    setSelectedStepForDetails(null);
+  };
+
+  const getStatusIcon = (status: ExecutionStep['status']) => {
+    switch (status) {
+      case 'pending':
+        return <ClockIcon className="w-5 h-5 text-gray-400" />;
+      case 'running':
+        return <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />;
+      case 'completed':
+        return <CheckCircleIcon className="w-5 h-5 text-green-500" />;
+      case 'failed':
+        return <XCircleIcon className="w-5 h-5 text-red-500" />;
+      case 'skipped':
+        return <ExclamationTriangleIcon className="w-5 h-5 text-yellow-500" />;
+      default:
+        return <InformationCircleIcon className="w-5 h-5 text-gray-400" />;
+    }
+  };
+
+  const getStatusColor = (status: ExecutionStep['status']) => {
+    switch (status) {
+      case 'pending':
+        return 'bg-gray-100 text-gray-800';
+      case 'running':
+        return 'bg-blue-100 text-blue-800';
+      case 'completed':
+        return 'bg-green-100 text-green-800';
+      case 'failed':
+        return 'bg-red-100 text-red-800';
+      case 'skipped':
+        return 'bg-yellow-100 text-yellow-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const formatDuration = (ms?: number) => {
+    if (!ms) return '-';
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(2)}s`;
   };
 
   const getExecutionModeOptions = () => [
@@ -787,32 +1225,72 @@ const SequenceBuilder: React.FC<SequenceBuilderProps> = ({
               {isValid ? 'Sequence is valid' : 'Sequence needs configuration'}
             </span>
           </div>
-          <div className="flex space-x-2">
-            {process.env.NODE_ENV === 'development' && (
-              <button
-                onClick={() => {
-                  console.log('Current validation state:', {
-                    isValid,
-                    sequence,
-                    validationResult: validateSequence(sequence)
-                  });
-                }}
-                className="px-3 py-2 text-sm font-medium text-gray-600 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200"
-              >
-                Debug Validation
-              </button>
-            )}
-            <button
-              onClick={testSequence}
-              disabled={!isValid}
-              className={`flex items-center space-x-1 px-3 py-2 text-sm font-medium text-white border border-transparent rounded-md ${isValid ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-400 cursor-not-allowed'}`}
-            >
-              <PlayIcon className="w-4 h-4" />
-              <span>Test Sequence</span>
-            </button>
-          </div>
         </div>
       </div>
+
+      {/* Tab Navigation */}
+      <div className="border-b border-gray-200">
+        <nav className="-mb-px flex space-x-8">
+          <button
+            onClick={() => setActiveTab('builder')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'builder'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <div className="flex items-center space-x-2">
+              <CodeBracketIcon className="w-4 h-4" />
+              <span>Sequence Builder</span>
+            </div>
+          </button>
+          <button
+            onClick={() => setActiveTab('testing')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'testing'
+                ? 'border-blue-500 text-blue-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <div className="flex items-center space-x-2">
+              <PlayIcon className="w-4 h-4" />
+              <span>Testing & Execution</span>
+            </div>
+          </button>
+        </nav>
+      </div>
+
+      {/* Tab Content */}
+      {activeTab === 'builder' ? (
+        <>
+          {/* Builder Content */}
+          <div className="flex items-center justify-between">
+            <div></div>
+            <div className="flex space-x-2">
+              {process.env.NODE_ENV === 'development' && (
+                <button
+                  onClick={() => {
+                    console.log('Current validation state:', {
+                      isValid,
+                      sequence,
+                      validationResult: validateSequence(sequence)
+                    });
+                  }}
+                  className="px-3 py-2 text-sm font-medium text-gray-600 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200"
+                >
+                  Debug Validation
+                </button>
+              )}
+              <button
+                onClick={testSequence}
+                disabled={!isValid}
+                className={`flex items-center space-x-1 px-3 py-2 text-sm font-medium text-white border border-transparent rounded-md ${isValid ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-400 cursor-not-allowed'}`}
+              >
+                <PlayIcon className="w-4 h-4" />
+                <span>Test Sequence</span>
+              </button>
+            </div>
+          </div>
 
       {/* API Response Storage Info */}
       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
@@ -1384,6 +1862,629 @@ const SequenceBuilder: React.FC<SequenceBuilderProps> = ({
             <div className="mt-3 flex justify-end space-x-2">
               <button onClick={() => setShowCurlModal(false)} className="px-3 py-1 text-sm text-gray-700">Cancel</button>
               <button onClick={() => applyCurlToStep(curlTargetIndex ?? Math.max(0, (sequence.steps.length - 1)))} className="px-3 py-1 text-sm text-white bg-indigo-600 rounded">Apply</button>
+            </div>
+          </div>
+        </div>
+      )}
+        </>
+      ) : (
+        /* Testing Tab Content */
+        <div className="space-y-6">
+          {/* Real API Call Warning */}
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <div className="flex items-start space-x-3">
+              <div className="flex-shrink-0">
+                <ExclamationTriangleIcon className="w-5 h-5 text-yellow-600" />
+              </div>
+              <div className="flex-1">
+                <h4 className="text-sm font-medium text-yellow-900">Real API Calls</h4>
+                <p className="text-sm text-yellow-700 mt-1">
+                  <strong>Warning:</strong> This testing interface will make actual HTTP requests to the configured API endpoints. 
+                  Make sure you're testing against the correct environment and that your authentication credentials are valid.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Testing Header */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h4 className="text-lg font-medium text-gray-900">Sequence Testing & Execution</h4>
+              <p className="text-sm text-gray-500">
+                Test your integration sequence with real data and monitor execution
+              </p>
+            </div>
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={() => setShowTestDataModal(true)}
+                className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                <DocumentTextIcon className="w-4 h-4" />
+                <span>Configure Test Data</span>
+              </button>
+              <button
+                onClick={resetExecution}
+                disabled={executionSteps.length === 0}
+                className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <ArrowPathIcon className="w-4 h-4" />
+                <span>Reset</span>
+              </button>
+              <button
+                onClick={testSequence}
+                disabled={!isValid || isExecuting}
+                className={`flex items-center space-x-2 px-4 py-2 text-sm font-medium text-white rounded-md ${
+                  isExecuting
+                    ? 'bg-blue-500 cursor-not-allowed'
+                    : isValid
+                    ? 'bg-green-600 hover:bg-green-700'
+                    : 'bg-gray-400 cursor-not-allowed'
+                }`}
+              >
+                {isExecuting ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <PlayIcon className="w-4 h-4" />
+                )}
+                <span>{isExecuting ? 'Executing...' : 'Execute Sequence'}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Sequence Configuration Summary */}
+          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h5 className="text-sm font-medium text-gray-900">Sequence Configuration</h5>
+              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                isValid ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+              }`}>
+                {isValid ? 'Valid' : 'Invalid'}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+              <div>
+                <span className="font-medium text-gray-700">Name:</span>
+                <span className="ml-2 text-gray-900">{sequence.name}</span>
+              </div>
+              <div>
+                <span className="font-medium text-gray-700">Type:</span>
+                <span className="ml-2 text-gray-900">{sequence.sequence_type}</span>
+              </div>
+              <div>
+                <span className="font-medium text-gray-700">Mode:</span>
+                <span className="ml-2 text-gray-900">{sequence.execution_mode}</span>
+              </div>
+              <div>
+                <span className="font-medium text-gray-700">Steps:</span>
+                <span className="ml-2 text-gray-900">{sequence.steps.length}</span>
+              </div>
+              <div>
+                <span className="font-medium text-gray-700">Stop on Error:</span>
+                <span className="ml-2 text-gray-900">{sequence.stop_on_error ? 'Yes' : 'No'}</span>
+              </div>
+              <div>
+                <span className="font-medium text-gray-700">Retry Failed:</span>
+                <span className="ml-2 text-gray-900">{sequence.retry_failed_steps ? 'Yes' : 'No'}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Execution Summary */}
+          {executionId && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                    <InformationCircleIcon className="w-5 h-5 text-blue-600" />
+                  </div>
+                  <div>
+                    <h5 className="text-sm font-medium text-blue-900">Execution ID: {executionId}</h5>
+                    <p className="text-sm text-blue-700">
+                      {executionSteps.filter(s => s.status === 'completed').length} of {executionSteps.length} steps completed
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm text-blue-700">
+                    Started: {executionSteps[0]?.start_time ? new Date(executionSteps[0].start_time).toLocaleTimeString() : '-'}
+                  </p>
+                  <p className="text-sm text-blue-700">
+                    Duration: {formatDuration(executionSteps.reduce((total, step) => total + (step.duration_ms || 0), 0))}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Data Flow Visualization */}
+          {executionSteps.length > 0 && (
+            <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
+              <h5 className="text-md font-medium text-gray-900 mb-4">Data Flow Between Steps</h5>
+              <div className="space-y-3">
+                {executionSteps.map((step, index) => {
+                  const nextStep = executionSteps[index + 1];
+                  const hasDataFlow = step.response_data && nextStep && nextStep.request_data;
+                  
+                  return (
+                    <div key={index} className="flex items-center space-x-4">
+                      {/* Step Info */}
+                      <div className="flex-1 bg-gray-50 rounded-lg p-3 border border-gray-200">
+                        <div className="flex items-center justify-between mb-2">
+                          <h6 className="text-sm font-medium text-gray-900">{step.step_name}</h6>
+                          <span className="text-xs text-gray-500">Step {step.step_order}</span>
+                        </div>
+                        
+                        {/* Output Fields */}
+                        {step.response_data && (
+                          <div className="text-xs">
+                            <span className="font-medium text-gray-700">Outputs:</span>
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {Object.keys(step.response_data.data || {}).map((key, keyIndex) => (
+                                <span 
+                                  key={keyIndex}
+                                  className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800"
+                                >
+                                  {key}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Flow Arrow */}
+                      {hasDataFlow && (
+                        <div className="flex flex-col items-center space-y-1">
+                          <ArrowRightIcon className="w-5 h-5 text-blue-500" />
+                          <span className="text-xs text-blue-600 font-medium">Data Flow</span>
+                        </div>
+                      )}
+                      
+                      {/* Next Step Info */}
+                      {nextStep && hasDataFlow && (
+                        <div className="flex-1 bg-blue-50 rounded-lg p-3 border border-blue-200">
+                          <div className="flex items-center justify-between mb-2">
+                            <h6 className="text-sm font-medium text-blue-900">{nextStep.step_name}</h6>
+                            <span className="text-xs text-blue-500">Step {nextStep.step_order}</span>
+                          </div>
+                          
+                          {/* Input Fields */}
+                          <div className="text-xs">
+                            <span className="font-medium text-blue-700">Inputs:</span>
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {Object.keys(nextStep.request_data || {}).slice(0, 5).map((key, keyIndex) => (
+                                <span 
+                                  key={keyIndex}
+                                  className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
+                                >
+                                  {key}
+                                </span>
+                              ))}
+                              {Object.keys(nextStep.request_data || {}).length > 5 && (
+                                <span className="text-xs text-blue-600">+{Object.keys(nextStep.request_data || {}).length - 5} more</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              
+              {/* Data Flow Summary */}
+              <div className="mt-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                <div className="text-xs text-gray-600">
+                  <span className="font-medium">Data Flow Summary:</span> 
+                  <span className="ml-2">
+                    {executionSteps.filter(step => step.response_data).length} steps produced data, 
+                    {executionSteps.filter(step => step.request_data).length} steps consumed data
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Workflow Visualization */}
+          <div className="bg-white border border-gray-200 rounded-lg p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h5 className="text-md font-medium text-gray-900">Workflow Execution</h5>
+              {isExecuting && (
+                <div className="flex items-center space-x-2 text-sm text-blue-600">
+                  <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                  <span>Executing...</span>
+                </div>
+              )}
+            </div>
+            
+            {/* Progress Bar */}
+            {executionSteps.length > 0 && (
+              <div className="mb-6">
+                <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
+                  <span>Overall Progress</span>
+                  <span>
+                    {executionSteps.filter(s => s.status === 'completed').length} / {executionSteps.length} steps
+                  </span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-300 ease-out"
+                    style={{ 
+                      width: `${executionSteps.length > 0 ? (executionSteps.filter(s => s.status === 'completed').length / executionSteps.length) * 100 : 0}%` 
+                    }}
+                  ></div>
+                </div>
+              </div>
+            )}
+            
+            <div className="space-y-4">
+              {executionSteps.map((step, index) => (
+                <div key={index} className="relative">
+                  {/* Step Node */}
+                  <div className="flex items-center space-x-4">
+                    {/* Status Icon */}
+                    <div className="flex-shrink-0">
+                      {getStatusIcon(step.status)}
+                    </div>
+                    
+                    {/* Step Info */}
+                    <div className="flex-1 bg-gray-50 rounded-lg p-4 border border-gray-200">
+                      <div className="flex items-center justify-between mb-2">
+                        <h6 className="text-sm font-medium text-gray-900">{step.step_name}</h6>
+                        <div className="flex items-center space-x-2">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(step.status)}`}>
+                            {step.status.charAt(0).toUpperCase() + step.status.slice(1)}
+                          </span>
+                          {step.retry_count && step.retry_count > 0 && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+                              Retry {step.retry_count}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs text-gray-600">
+                        <div>
+                          <span className="font-medium">Order:</span> {step.step_order}
+                        </div>
+                        <div>
+                          <span className="font-medium">Duration:</span> {formatDuration(step.duration_ms)}
+                        </div>
+                        <div>
+                          <span className="font-medium">Start:</span> {step.start_time ? new Date(step.start_time).toLocaleTimeString() : '-'}
+                        </div>
+                        <div>
+                          <span className="font-medium">End:</span> {step.end_time ? new Date(step.end_time).toLocaleTimeString() : '-'}
+                        </div>
+                      </div>
+                      
+                      {/* Data Flow Indicators */}
+                      {step.request_data && (
+                        <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-blue-700">Request Payload</span>
+                            <span className="text-blue-600">
+                              {Object.keys(step.request_data).length} fields
+                            </span>
+                          </div>
+                          <div className="mt-1 text-blue-600">
+                            {Object.keys(step.request_data).slice(0, 3).join(', ')}
+                            {Object.keys(step.request_data).length > 3 && '...'}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Error Message */}
+                      {step.error_message && (
+                        <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+                          <span className="font-medium">Error:</span> {step.error_message}
+                        </div>
+                      )}
+                      
+                      {/* Action Buttons */}
+                      <div className="flex items-center space-x-2 mt-3">
+                        <button
+                          onClick={() => setSelectedStepForDetails(selectedStepForDetails === index ? null : index)}
+                          className="flex items-center space-x-1 text-xs text-blue-600 hover:text-blue-800"
+                        >
+                          <EyeIcon className="w-3 h-3" />
+                          <span>{selectedStepForDetails === index ? 'Hide' : 'View'} Details</span>
+                        </button>
+                        {step.response_data && (
+                          <button
+                            onClick={() => {
+                              console.log('Response data:', step.response_data);
+                              toast.success('Response data logged to console');
+                            }}
+                            className="flex items-center space-x-1 text-xs text-green-600 hover:text-green-800"
+                          >
+                            <DocumentTextIcon className="w-3 h-3" />
+                            <span>View Response</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Connection Line */}
+                  {index < executionSteps.length - 1 && (
+                    <div className="absolute left-6 top-16 w-0.5 h-8 bg-gray-300"></div>
+                  )}
+                  
+                  {/* Step Details Panel */}
+                  {selectedStepForDetails === index && (
+                    <div className="ml-10 mt-4 bg-white border border-gray-200 rounded-lg p-4">
+                      <h6 className="text-sm font-medium text-gray-900 mb-3">Step Details</h6>
+                      
+                      {/* Request Data */}
+                      {step.request_data && (
+                        <div className="mb-4">
+                          <h6 className="text-xs font-medium text-gray-700 block mb-2">Request Payload</h6>
+                          <div className="text-xs text-gray-600 mb-2">
+                            <span className="font-medium">Fields:</span> {Object.keys(step.request_data).length} | 
+                            <span className="font-medium ml-2">Size:</span> {JSON.stringify(step.request_data).length} chars
+                          </div>
+                          <pre className="text-xs bg-gray-50 p-2 rounded border overflow-x-auto max-h-40">
+                            {JSON.stringify(step.request_data, null, 2)}
+                          </pre>
+                        </div>
+                      )}
+                      
+                      {/* Response Data */}
+                      {step.response_data && (
+                        <div className="mb-4">
+                          <h6 className="text-xs font-medium text-gray-700 block mb-2">Response Data</h6>
+                          <div className="text-xs text-gray-600 mb-2">
+                            <span className="font-medium">HTTP Status:</span> {step.response_data._metadata?.status || 'N/A'} | 
+                            <span className="font-medium ml-2">Size:</span> {JSON.stringify(step.response_data).length} chars
+                          </div>
+                          
+                          {/* API Response */}
+                          <div className="mb-2">
+                            <h6 className="text-xs font-medium text-gray-600 block mb-1">API Response:</h6>
+                            <pre className="text-xs bg-gray-50 p-2 rounded border overflow-x-auto max-h-32">
+                              {JSON.stringify(step.response_data, (key, value) => {
+                                // Hide metadata in the main response display
+                                if (key === '_metadata') return undefined;
+                                return value;
+                              }, 2)}
+                            </pre>
+                          </div>
+                          
+                          {/* Response Metadata */}
+                          {step.response_data._metadata && (
+                            <div>
+                              <h6 className="text-xs font-medium text-gray-600 block mb-1">Response Metadata:</h6>
+                              <div className="text-xs bg-blue-50 p-2 rounded border">
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div><span className="font-medium">HTTP Status:</span> {step.response_data._metadata.status}</div>
+                                  <div><span className="font-medium">Response Time:</span> {step.response_data._metadata.response_time_ms}ms</div>
+                                  <div><span className="font-medium">URL:</span> {step.response_data._metadata.url}</div>
+                                  <div><span className="font-medium">Method:</span> {step.response_data._metadata.method}</div>
+                                  <div><span className="font-medium">Timestamp:</span> {new Date(step.response_data._metadata.timestamp).toLocaleTimeString()}</div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      
+                      {/* Step Logs */}
+                      {step.logs && step.logs.length > 0 && (
+                        <div>
+                          <h6 className="text-xs font-medium text-gray-700 block mb-2">Step Logs</h6>
+                          <div className="space-y-1">
+                            {step.logs.map((log, logIndex) => (
+                              <div key={logIndex} className="text-xs p-2 bg-gray-50 rounded border">
+                                <span className="text-gray-500">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
+                                <span className={`ml-2 px-1 py-0.5 rounded text-xs font-medium ${
+                                  log.level === 'error' ? 'bg-red-100 text-red-800' :
+                                  log.level === 'warning' ? 'bg-yellow-100 text-yellow-800' :
+                                  log.level === 'info' ? 'bg-blue-100 text-blue-800' :
+                                  'bg-gray-100 text-gray-800'
+                                }`}>
+                                  {log.level.toUpperCase()}
+                                </span>
+                                <span className="ml-2">{log.message}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+              
+              {/* Empty State */}
+              {executionSteps.length === 0 && (
+                <div className="text-center py-12 bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg">
+                  <PlayIcon className="mx-auto h-12 w-12 text-gray-400" />
+                  <h3 className="mt-2 text-sm font-medium text-gray-900">No execution data</h3>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Execute the sequence to see the workflow visualization
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Execution Logs */}
+          <div className="bg-white border border-gray-200 rounded-lg p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h5 className="text-md font-medium text-gray-900">Execution Logs</h5>
+              <div className="flex items-center space-x-2">
+                <span className="text-sm text-gray-500">
+                  {executionLogs.length} log entries
+                </span>
+                {executionLogs.length > 0 && (
+                  <button
+                    onClick={() => setExecutionLogs([])}
+                    className="text-xs text-red-600 hover:text-red-800"
+                  >
+                    Clear Logs
+                  </button>
+                )}
+              </div>
+            </div>
+            
+            <div className="space-y-2 max-h-96 overflow-y-auto">
+              {executionLogs.map((log, index) => (
+                <div key={index} className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg border">
+                  <div className={`flex-shrink-0 w-2 h-2 rounded-full mt-2 ${
+                    log.level === 'error' ? 'bg-red-500' :
+                    log.level === 'warning' ? 'bg-yellow-500' :
+                    log.level === 'info' ? 'bg-blue-500' :
+                    'bg-gray-500'
+                  }`}></div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs text-gray-500">
+                        {new Date(log.timestamp).toLocaleTimeString()}
+                      </span>
+                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${
+                        log.level === 'error' ? 'bg-red-100 text-red-800' :
+                        log.level === 'warning' ? 'bg-yellow-100 text-yellow-800' :
+                        log.level === 'info' ? 'bg-blue-100 text-blue-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {log.level.toUpperCase()}
+                      </span>
+                    </div>
+                    <p className="text-sm text-gray-900 mt-1">{log.message}</p>
+                    
+                    {/* Enhanced Data Display */}
+                    {log.data && (
+                      <details className="mt-2">
+                        <summary className="text-xs text-gray-600 cursor-pointer hover:text-gray-800">
+                          View Data
+                        </summary>
+                        <div className="mt-2 space-y-2">
+                          {/* Data Flow Information */}
+                          {log.data.data_flow && (
+                            <div className="p-2 bg-blue-50 border border-blue-200 rounded text-xs">
+                              <div className="font-medium text-blue-800 mb-1">Data Flow:</div>
+                              {log.data.extracted && (
+                                <div className="mb-1">
+                                  <span className="text-blue-700">Extracted:</span>
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {Object.entries(log.data.extracted).map(([key, value]) => (
+                                      <span key={key} className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                        {key}: {String(value).substring(0, 20)}{String(value).length > 20 ? '...' : ''}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              {log.data.available_for_next_steps && (
+                                <div>
+                                  <span className="text-blue-700">Available for next steps:</span>
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    {log.data.available_for_next_steps.slice(0, 5).map((field: string) => (
+                                      <span key={field} className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                        {field}
+                                      </span>
+                                    ))}
+                                    {log.data.available_for_next_steps.length > 5 && (
+                                      <span className="text-xs text-blue-600">+{log.data.available_for_next_steps.length - 5} more</span>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                          
+                          {/* Request/Response Data */}
+                          {log.data.request_payload && (
+                            <div className="p-2 bg-gray-50 border border-gray-200 rounded text-xs">
+                              <div className="font-medium text-gray-800 mb-1">Request Payload:</div>
+                              <pre className="text-xs bg-white p-2 rounded border overflow-x-auto max-h-32">
+                                {JSON.stringify(log.data.request_payload, null, 2)}
+                              </pre>
+                            </div>
+                          )}
+                          
+                          {/* General Data */}
+                          {!log.data.data_flow && !log.data.request_payload && (
+                            <pre className="text-xs bg-white p-2 rounded border overflow-x-auto max-h-32">
+                              {JSON.stringify(log.data, null, 2)}
+                            </pre>
+                          )}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                </div>
+              ))}
+              
+              {executionLogs.length === 0 && (
+                <div className="text-center py-8 text-gray-500">
+                  No logs yet. Execute the sequence to see execution logs.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Test Data Configuration Modal */}
+      {showTestDataModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
+          <div className="bg-white rounded-lg shadow p-6 w-full max-w-2xl">
+            <h4 className="text-lg font-medium text-gray-900 mb-4">Configure Test Data</h4>
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
+                  <input
+                    type="text"
+                    value={testData.full_name}
+                    onChange={(e) => setTestData({ ...testData, full_name: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={testData.email}
+                    onChange={(e) => setTestData({ ...testData, email: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
+                  <input
+                    type="tel"
+                    value={testData.phone}
+                    onChange={(e) => setTestData({ ...testData, phone: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Loan Amount</label>
+                  <input
+                    type="text"
+                    value={testData.loan_amount}
+                    onChange={(e) => setTestData({ ...testData, loan_amount: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end space-x-3">
+              <button
+                onClick={() => setShowTestDataModal(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => setShowTestDataModal(false)}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
+              >
+                Save
+              </button>
             </div>
           </div>
         </div>
