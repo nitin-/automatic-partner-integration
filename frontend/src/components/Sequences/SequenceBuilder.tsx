@@ -118,20 +118,18 @@ const SequenceBuilder: React.FC<SequenceBuilderProps> = ({
   const [templateError, setTemplateError] = useState<Record<number, string | undefined>>({});
   const [dnsValidationStatus, setDnsValidationStatus] = useState<Record<number, { loading: boolean; valid: boolean; message: string }>>({});
   
-  // Testing tab state
-  const [activeTab, setActiveTab] = useState<'builder' | 'testing'>('builder');
-  const [executionSteps, setExecutionSteps] = useState<ExecutionStep[]>([]);
-  const [isExecuting, setIsExecuting] = useState(false);
-  const [executionId, setExecutionId] = useState<string | null>(null);
-  const [testData, setTestData] = useState({
-    full_name: 'John Doe',
-    email: 'john@example.com',
-    phone: '+1-555-123-4567',
-    loan_amount: '50000'
-  });
-  const [showTestDataModal, setShowTestDataModal] = useState(false);
+  // Tab state
+  const [activeTab, setActiveTab] = useState<'builder' | 'api'>('builder');
+  
+  // API Generation state
+  const [showApiGenerationModal, setShowApiGenerationModal] = useState(false);
+  const [currentGenerationType, setCurrentGenerationType] = useState<string>('');
+
+  // Execution state
   const [executionLogs, setExecutionLogs] = useState<ExecutionLog[]>([]);
-  const [selectedStepForDetails, setSelectedStepForDetails] = useState<number | null>(null);
+  const [executionSteps, setExecutionSteps] = useState<ExecutionStep[]>([]);
+  const [executionId, setExecutionId] = useState<string | null>(null);
+  const [selectedStepForDetails, setSelectedStepForDetails] = useState<ExecutionStep | null>(null);
 
   const allowedHttpMethods = useMemo(() => new Set(['GET','POST','PUT','PATCH','DELETE']), []);
 
@@ -763,363 +761,19 @@ const SequenceBuilder: React.FC<SequenceBuilderProps> = ({
     updateStep(stepIndex, 'output_fields', newOutputFields);
   };
 
-  const testSequence = async () => {
-    if (!isValid) {
-      toast.error('Please fix validation errors before testing');
-      return;
-    }
 
-    try {
-      setIsExecuting(true);
-      setExecutionId(null);
-      setExecutionSteps([]);
-      setExecutionLogs([]);
-      
-      // Initialize execution steps
-      const initialSteps: ExecutionStep[] = sequence.steps.map((step, index) => ({
-        step_order: step.sequence_order,
-        step_name: step.name || `Step ${step.sequence_order}`,
-        status: 'pending',
-        logs: []
-      }));
-      setExecutionSteps(initialSteps);
 
-      // Add initial log
-      addExecutionLog('info', 'Starting sequence execution', { sequence_name: sequence.name, steps_count: sequence.steps.length });
 
-      // Track accumulated data from previous steps
-      let accumulatedData: Record<string, any> = { ...testData };
-      
-      // Execute steps sequentially
-      for (let i = 0; i < sequence.steps.length; i++) {
-        const step = sequence.steps[i];
-        
-        // Update step status to running
-        updateExecutionStep(i, { status: 'running', start_time: new Date().toISOString() });
-        
-        // Build request payload using accumulated data and step configuration
-        const requestPayload = buildRequestPayload(step, accumulatedData, i);
-        
-        addExecutionLog('info', `Executing ${step.name || `Step ${step.sequence_order}`}`, { 
-          step_order: step.sequence_order,
-          api_endpoint: step.api_endpoint,
-          http_method: step.http_method,
-          request_payload: requestPayload
-        });
-
-        try {
-          // Make actual API call
-          const startTime = Date.now();
-          const response = await executeApiCall(step, requestPayload);
-          const duration = Date.now() - startTime;
-          
-          if (response.success) {
-            // Extract output fields and add to accumulated data
-            const extractedData = extractOutputFields(step, response.data);
-            accumulatedData = { ...accumulatedData, ...extractedData };
-            
-            // Log data flow
-            if (Object.keys(extractedData).length > 0) {
-              addExecutionLog('info', `Step ${step.sequence_order} extracted data for next steps`, {
-                step_order: step.sequence_order,
-                extracted_fields: extractedData,
-                accumulated_data: accumulatedData
-              });
-            }
-            
-            updateExecutionStep(i, { 
-              status: 'completed', 
-              end_time: new Date().toISOString(),
-              request_data: requestPayload,
-              response_data: response.data,
-              duration_ms: duration
-            });
-            
-            addExecutionLog('info', `Step ${step.sequence_order} completed successfully`, {
-              step_order: step.sequence_order,
-              response: response.data,
-              data_flow: {
-                extracted: extractedData,
-                available_for_next_steps: Object.keys(accumulatedData)
-              }
-            });
-          } else {
-            // Handle API error
-            updateExecutionStep(i, { 
-              status: 'failed', 
-              end_time: new Date().toISOString(),
-              request_data: requestPayload,
-              error_message: response.error || 'API call failed',
-              duration_ms: Date.now() - startTime
-            });
-            
-            addExecutionLog('error', `Step ${step.sequence_order} failed: ${response.error}`, { 
-              step_order: step.sequence_order,
-              request_payload: requestPayload,
-              error_details: response.errorDetails
-            });
-            
-            if (sequence.stop_on_error) {
-              addExecutionLog('warning', 'Sequence execution stopped due to step failure', { 
-                step_order: step.sequence_order,
-                accumulated_data: accumulatedData
-              });
-              break;
-            }
-          }
-        } catch (error) {
-          const startTime = executionSteps[i]?.start_time;
-          const duration = startTime ? Date.now() - new Date(startTime).getTime() : 0;
-          
-          updateExecutionStep(i, { 
-            status: 'failed', 
-            end_time: new Date().toISOString(),
-            request_data: requestPayload,
-            error_message: error instanceof Error ? error.message : 'Unknown error',
-            duration_ms: duration
-          });
-          
-          addExecutionLog('error', `Step ${step.sequence_order} failed with exception`, { 
-            step_order: step.sequence_order, 
-            error: error instanceof Error ? error.message : 'Unknown error',
-            request_payload: requestPayload
-          });
-          
-          if (sequence.stop_on_error) {
-            addExecutionLog('warning', 'Sequence execution stopped due to step failure', { 
-              step_order: step.sequence_order,
-              accumulated_data: accumulatedData
-            });
-            break;
-          }
-        }
-      }
-
-      // Final execution log
-      const completedSteps = executionSteps.filter(step => step.status === 'completed').length;
-      const failedSteps = executionSteps.filter(step => step.status === 'failed').length;
-      
-      if (failedSteps === 0) {
-        addExecutionLog('info', 'Sequence execution completed successfully', { 
-          total_steps: sequence.steps.length, 
-          completed_steps: completedSteps,
-          final_accumulated_data: accumulatedData
-        });
-        toast.success('Sequence test completed successfully!');
-      } else {
-        addExecutionLog('warning', 'Sequence execution completed with failures', { 
-          total_steps: sequence.steps.length, 
-          completed_steps: completedSteps, 
-          failed_steps: failedSteps,
-          accumulated_data: accumulatedData
-        });
-        toast.error(`Sequence test completed with ${failedSteps} failures`);
-      }
-      
-      setIsExecuting(false);
-      setExecutionId(`exec_${Date.now()}`);
-      
-    } catch (error) {
-      setIsExecuting(false);
-      addExecutionLog('error', 'Sequence execution failed', { error: error instanceof Error ? error.message : 'Unknown error' });
-      toast.error('Sequence test failed');
-      console.error('Test error:', error);
-    }
-  };
-
-  // Execute actual API call based on step configuration
-  const executeApiCall = async (step: IntegrationStep, payload: any) => {
-    try {
-      const startTime = Date.now();
-      
-      // Prepare headers
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        ...(step.request_headers || {})
-      };
-      
-      // Add authentication headers
-      if (step.auth_type === 'API_KEY' && step.auth_config?.key_name && step.auth_config?.key_value) {
-        if (step.auth_config.key_location === 'header') {
-          headers[step.auth_config.key_name] = step.auth_config.key_value;
-        }
-      } else if (step.auth_type === 'BEARER_TOKEN' && step.auth_config?.token) {
-        headers['Authorization'] = `Bearer ${step.auth_config.token}`;
-      } else if (step.auth_type === 'BASIC_AUTH' && step.auth_config?.username && step.auth_config?.password) {
-        const credentials = btoa(`${step.auth_config.username}:${step.auth_config.password}`);
-        headers['Authorization'] = `Basic ${credentials}`;
-      }
-      
-      // Prepare request options
-      const requestOptions: RequestInit = {
-        method: step.http_method,
-        headers,
-        mode: 'cors',
-        cache: 'no-cache',
-        credentials: 'same-origin',
-        redirect: 'follow',
-        referrerPolicy: 'no-referrer'
-      };
-      
-      // Add body for non-GET requests
-      if (step.http_method !== 'GET' && payload && Object.keys(payload).length > 0) {
-        requestOptions.body = JSON.stringify(payload);
-      }
-      
-      // Add query parameters for GET requests
-      let url = step.api_endpoint;
-      if (step.http_method === 'GET' && payload && Object.keys(payload).length > 0) {
-        const urlObj = new URL(url.startsWith('http') ? url : `http://localhost${url}`);
-        Object.entries(payload).forEach(([key, value]) => {
-          if (value !== undefined && value !== null && value !== '') {
-            urlObj.searchParams.append(key, String(value));
-          }
-        });
-        url = urlObj.toString();
-      }
-      
-      // Make the actual API call
-      const response = await fetch(url, requestOptions);
-      const responseText = await response.text();
-      
-      // Parse response
-      let responseData: any;
-      try {
-        responseData = responseText ? JSON.parse(responseText) : {};
-      } catch (parseError) {
-        responseData = { raw_response: responseText };
-      }
-      
-      // Add metadata to response
-      const enrichedResponse = {
-        ...responseData,
-        _metadata: {
-          status: response.status,
-          statusText: response.statusText,
-          headers: Object.fromEntries(response.headers.entries()),
-          url: url,
-          method: step.http_method,
-          request_payload: payload,
-          response_time_ms: Date.now() - startTime,
-          timestamp: new Date().toISOString()
-        }
-      };
-      
-      // Check if response indicates success
-      if (response.ok) {
-        return {
-          success: true,
-          data: enrichedResponse,
-          error: null,
-          errorDetails: null
-        };
-      } else {
-        return {
-          success: false,
-          data: enrichedResponse,
-          error: `HTTP ${response.status}: ${response.statusText}`,
-          errorDetails: {
-            status: response.status,
-            statusText: response.statusText,
-            response_data: enrichedResponse
-          }
-        };
-      }
-      
-    } catch (error) {
-      return {
-        success: false,
-        data: null,
-        error: error instanceof Error ? error.message : 'Network error',
-        errorDetails: {
-          error_type: 'network',
-          error_message: error instanceof Error ? error.message : 'Unknown error',
-          timestamp: new Date().toISOString()
-        }
-      };
-    }
-  };
 
   // Build request payload using accumulated data and step configuration
-  const buildRequestPayload = (step: IntegrationStep, accumulatedData: Record<string, any>, stepIndex: number) => {
-    let payload: any = {};
-    
-    // Start with test data
-    payload = { ...testData };
-    
-    // Add step-specific configuration
-    if (step.request_schema?.template) {
-      payload = { ...payload, ...step.request_schema.template };
-    }
-    
-    // Add query parameters
-    if (step.request_schema?.query_params) {
-      payload = { ...payload, ...step.request_schema.query_params };
-    }
-    
-    // Process dependencies from previous steps
-    if (step.depends_on_fields && Object.keys(step.depends_on_fields).length > 0) {
-      Object.entries(step.depends_on_fields).forEach(([targetField, sourceField]) => {
-        if (sourceField && accumulatedData[sourceField] !== undefined) {
-          payload[targetField] = accumulatedData[sourceField];
-        }
-      });
-    }
-    
-    // Add step metadata
-    payload.step_order = step.sequence_order;
-    payload.step_name = step.name;
-    payload.execution_timestamp = new Date().toISOString();
-    
-    return payload;
-  };
+
 
 
 
   // Extract output fields from response based on step configuration
-  const extractOutputFields = (step: IntegrationStep, response: any): Record<string, any> => {
-    const extracted: Record<string, any> = {};
-    
-    if (!step.output_fields || step.output_fields.length === 0) {
-      return extracted;
-    }
-    
-    step.output_fields.forEach(fieldPath => {
-      if (!fieldPath || !fieldPath.trim()) return;
-      
-      try {
-        // Simple JSON path extraction (supports basic $.field.subfield syntax)
-        if (fieldPath.startsWith('$.')) {
-          const pathParts = fieldPath.substring(2).split('.');
-          let value = response;
-          
-          for (const part of pathParts) {
-            if (value && typeof value === 'object' && part in value) {
-              value = value[part];
-            } else {
-              value = undefined;
-              break;
-            }
-          }
-          
-          if (value !== undefined) {
-            const fieldName = pathParts[pathParts.length - 1];
-            extracted[fieldName] = value;
-          }
-        }
-      } catch (error) {
-        console.warn(`Failed to extract field ${fieldPath}:`, error);
-      }
-    });
-    
-    return extracted;
-  };
 
-  const updateExecutionStep = (index: number, updates: Partial<ExecutionStep>) => {
-    setExecutionSteps(prev => prev.map((step, i) => 
-      i === index ? { ...step, ...updates } : step
-    ));
-  };
+
+
 
   const addExecutionLog = (level: ExecutionLog['level'], message: string, data?: any) => {
     const log: ExecutionLog = {
@@ -1208,6 +862,502 @@ const SequenceBuilder: React.FC<SequenceBuilderProps> = ({
     { value: 'OAUTH2', label: 'OAuth2' }
   ];
 
+  // API Generation Functions
+  const generateApiSpec = () => {
+    setCurrentGenerationType('API Specification');
+    setShowApiGenerationModal(true);
+    
+    // Simulate generation process
+    setTimeout(() => {
+      setShowApiGenerationModal(false);
+      toast.success('API Specification generated successfully!');
+      
+      // Create and download the OpenAPI spec
+      const openAPISpec = {
+        openapi: '3.0.0',
+        info: {
+          title: `${sequence.name} Integration Sequence API`,
+          description: sequence.description,
+          version: '1.0.0'
+        },
+        servers: [
+          {
+            url: 'https://api.yourdomain.com/api/v1',
+            description: 'Production API Server'
+          }
+        ],
+        paths: {
+          [`/sequences/${sequence.id || 'sequence_id'}/execute`]: {
+            post: {
+              summary: 'Execute Integration Sequence',
+              description: 'Trigger the execution of this integration sequence',
+              requestBody: {
+                required: true,
+                content: {
+                  'application/json': {
+                    schema: {
+                      type: 'object',
+                      properties: {
+                        input_data: {
+                          type: 'object',
+                          description: 'Input data for the sequence execution'
+                        },
+                        options: {
+                          type: 'object',
+                          properties: {
+                            async: { type: 'boolean', default: false },
+                            timeout: { type: 'integer', default: 300 }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              responses: {
+                '200': {
+                  description: 'Sequence execution started successfully',
+                  content: {
+                    'application/json': {
+                      schema: {
+                        type: 'object',
+                        properties: {
+                          execution_id: { type: 'string' },
+                          status: { type: 'string' },
+                          message: { type: 'string' }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      };
+      
+      const blob = new Blob([JSON.stringify(openAPISpec, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${sequence.name.replace(/\s+/g, '_')}_openapi_spec.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 2000);
+  };
+
+  const generatePostmanCollection = () => {
+    setCurrentGenerationType('Postman Collection');
+    setShowApiGenerationModal(true);
+    
+    setTimeout(() => {
+      setShowApiGenerationModal(false);
+      toast.success('Postman Collection generated successfully!');
+      
+      const postmanCollection = {
+        info: {
+          name: `${sequence.name} Integration Sequence API`,
+          description: sequence.description,
+          schema: 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json'
+        },
+        item: [
+          {
+            name: 'Execute Sequence',
+            request: {
+              method: 'POST',
+              header: [
+                {
+                  key: 'Authorization',
+                  value: 'Bearer YOUR_API_TOKEN',
+                  type: 'text'
+                },
+                {
+                  key: 'Content-Type',
+                  value: 'application/json',
+                  type: 'text'
+                }
+              ],
+              url: {
+                raw: `https://api.yourdomain.com/api/v1/sequences/${sequence.id || 'sequence_id'}/execute`,
+                protocol: 'https',
+                host: ['api', 'yourdomain', 'com'],
+                path: ['api', 'v1', 'sequences', sequence.id || 'sequence_id', 'execute']
+              },
+              body: {
+                mode: 'raw',
+                raw: JSON.stringify({
+                  input_data: {
+                    full_name: 'John Doe',
+                    email: 'john@example.com',
+                    phone: '+1-555-123-4567',
+                    loan_amount: 50000
+                  }
+                }, null, 2)
+              }
+            }
+          }
+        ]
+      };
+      
+      const blob = new Blob([JSON.stringify(postmanCollection, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${sequence.name.replace(/\s+/g, '_')}_postman_collection.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 2000);
+  };
+
+  const generateJavaScriptClient = () => {
+    setCurrentGenerationType('JavaScript Client');
+    setShowApiGenerationModal(true);
+    
+    setTimeout(() => {
+      setShowApiGenerationModal(false);
+      toast.success('JavaScript Client generated successfully!');
+      
+      const jsClient = `// ${sequence.name} Integration Sequence API Client
+// Generated on ${new Date().toLocaleDateString()}
+
+class IntegrationSequenceClient {
+  constructor(baseURL, apiToken) {
+    this.baseURL = baseURL;
+    this.apiToken = apiToken;
+  }
+
+  async executeSequence(inputData, options = {}) {
+    const response = await fetch(\`\${this.baseURL}/sequences/${sequence.id || 'sequence_id'}/execute\`, {
+      method: 'POST',
+      headers: {
+        'Authorization': \`Bearer \${this.apiToken}\`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        input_data: inputData,
+        options: options
+      })
+    });
+    
+    if (!response.ok) {
+      throw new Error(\`HTTP \${response.status}: \${response.statusText}\`);
+    }
+    
+    return response.json();
+  }
+
+  async checkStatus() {
+    const response = await fetch(\`\${this.baseURL}/sequences/${sequence.id || 'sequence_id'}/status\`, {
+      headers: {
+        'Authorization': \`Bearer \${this.apiToken}\`
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(\`HTTP \${response.status}: \${response.statusText}\`);
+    }
+    
+    return response.json();
+  }
+
+  async getResults(executionId) {
+    const response = await fetch(\`\${this.baseURL}/sequences/${sequence.id || 'sequence_id'}/results/\${executionId}\`, {
+      headers: {
+        'Authorization': \`Bearer \${this.apiToken}\`
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(\`HTTP \${response.status}: \${response.statusText}\`);
+    }
+    
+    return response.json();
+  }
+}
+
+// Usage example
+const client = new IntegrationSequenceClient('https://api.yourdomain.com/api/v1', 'YOUR_API_TOKEN');
+
+export default IntegrationSequenceClient;`;
+      
+      const blob = new Blob([jsClient], { type: 'text/javascript' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${sequence.name.replace(/\s+/g, '_')}_js_client.js`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 2000);
+  };
+
+  const generatePythonClient = () => {
+    setCurrentGenerationType('Python Client');
+    setShowApiGenerationModal(true);
+    
+    setTimeout(() => {
+      setShowApiGenerationModal(false);
+      toast.success('Python Client generated successfully!');
+      
+      const pythonClient = `# ${sequence.name} Integration Sequence API Client
+# Generated on ${new Date().toLocaleDateString()}
+
+import requests
+import json
+from typing import Dict, Any, Optional
+
+class IntegrationSequenceClient:
+    def __init__(self, base_url: str, api_token: str):
+        self.base_url = base_url
+        self.api_token = api_token
+        self.headers = {
+            'Authorization': f'Bearer {api_token}',
+            'Content-Type': 'application/json'
+        }
+    
+    def execute_sequence(self, input_data: Dict[str, Any], options: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Execute the integration sequence with the given input data."""
+        url = f"{self.base_url}/sequences/{sequence.id or 'sequence_id'}/execute"
+        payload = {
+            'input_data': input_data,
+            'options': options or {}
+        }
+        
+        response = requests.post(url, json=payload, headers=self.headers)
+        response.raise_for_status()
+        return response.json()
+    
+    def check_status(self) -> Dict[str, Any]:
+        """Check the current status of the sequence execution."""
+        url = f"{self.base_url}/sequences/{sequence.id or 'sequence_id'}/status"
+        response = requests.get(url, headers=self.headers)
+        response.raise_for_status()
+        return response.json()
+    
+    def get_results(self, execution_id: str) -> Dict[str, Any]:
+        """Get the results of a completed sequence execution."""
+        url = f"{self.base_url}/sequences/{sequence.id or 'sequence_id'}/results/{execution_id}"
+        response = requests.get(url, headers=self.headers)
+        response.raise_for_status()
+        return response.json()
+
+# Usage example
+if __name__ == "__main__":
+    client = IntegrationSequenceClient('https://api.yourdomain.com/api/v1', 'YOUR_API_TOKEN')
+    
+    # Execute sequence
+    result = client.execute_sequence({
+        'full_name': 'John Doe',
+        'email': 'john@example.com',
+        'phone': '+1-555-123-4567',
+        'loan_amount': 50000
+    })
+    
+    print(f"Execution started: {result['execution_id']}")`;
+      
+      const blob = new Blob([pythonClient], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${sequence.name.replace(/\s+/g, '_')}_python_client.py`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 2000);
+  };
+
+  const generatePHPClient = () => {
+    setCurrentGenerationType('PHP Client');
+    setShowApiGenerationModal(true);
+    
+    setTimeout(() => {
+      setShowApiGenerationModal(false);
+      toast.success('PHP Client generated successfully!');
+      
+      const phpClient = `<?php
+/**
+ * ${sequence.name} Integration Sequence API Client
+ * Generated on ${new Date().toLocaleDateString()}
+ */
+
+class IntegrationSequenceClient
+{
+    private string $baseUrl;
+    private string $apiToken;
+    private array $headers;
+
+    public function __construct(string $baseUrl, string $apiToken)
+    {
+        $this->baseUrl = $baseUrl;
+        $this->apiToken = $apiToken;
+        $this->headers = [
+            'Authorization: Bearer ' . $apiToken,
+            'Content-Type: application/json'
+        ];
+    }
+
+    public function executeSequence(array $inputData, array $options = []): array
+    {
+        $url = $this->baseUrl . '/sequences/${sequence.id || 'sequence_id'}/execute';
+        $payload = [
+            'input_data' => $inputData,
+            'options' => $options
+        ];
+
+        $response = $this->makeRequest('POST', $url, $payload);
+        return json_decode($response, true);
+    }
+
+    public function checkStatus(): array
+    {
+        $url = $this->baseUrl . '/sequences/${sequence.id || 'sequence_id'}/status';
+        $response = $this->makeRequest('GET', $url);
+        return json_decode($response, true);
+    }
+
+    public function getResults(string $executionId): array
+    {
+        $url = $this->baseUrl . '/sequences/${sequence.id || 'sequence_id'}/results/' . $executionId;
+        $response = $this->makeRequest('GET', $url);
+        return json_decode($response, true);
+    }
+
+    private function makeRequest(string $method, string $url, array $data = null): string
+    {
+        $ch = curl_init();
+        
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, $this->headers);
+        
+        if ($method === 'POST') {
+            curl_setopt($ch, CURLOPT_POST, true);
+            if ($data) {
+                curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+            }
+        }
+        
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        curl_close($ch);
+        
+        if ($httpCode >= 400) {
+            throw new Exception('HTTP ' . $httpCode . ': ' . $response);
+        }
+        
+        return $response;
+    }
+}
+
+// Usage example
+$client = new IntegrationSequenceClient('https://api.yourdomain.com/api/v1', 'YOUR_API_TOKEN');
+
+try {
+    $result = $client->executeSequence([
+        'full_name' => 'John Doe',
+        'email' => 'john@example.com',
+        'phone' => '+1-555-123-4567',
+        'loan_amount' => 50000
+    ]);
+    
+    echo "Execution started: " . $result['execution_id'] . "\\n";
+} catch (Exception $e) {
+    echo "Error: " . $e->getMessage() . "\\n";
+}`;
+      
+      const blob = new Blob([phpClient], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${sequence.name.replace(/\s+/g, '_')}_php_client.php`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 2000);
+  };
+
+  const generateClientCode = () => {
+    // This function can be used to generate a generic client code
+    generateJavaScriptClient();
+  };
+
+  const testSequence = () => {
+    // Test the sequence by running a validation
+    if (!isValid) {
+      toast.error('Sequence is not valid. Please fix configuration issues first.');
+      return;
+    }
+    
+    toast.success('Sequence validation passed! Ready for execution.');
+    // Here you could add actual sequence testing logic
+  };
+
+  const generateOpenAPISpec = () => {
+    // Generate OpenAPI specification
+    if (!isValid) {
+      toast.error('Sequence is not valid. Please fix configuration issues first.');
+      return;
+    }
+    
+    setCurrentGenerationType('OpenAPI Specification');
+    setShowApiGenerationModal(true);
+    
+    setTimeout(() => {
+      setShowApiGenerationModal(false);
+      toast.success('OpenAPI Specification generated successfully!');
+      
+      // Here you would generate the actual OpenAPI spec
+      const openAPISpec = {
+        openapi: '3.0.0',
+        info: {
+          title: `${sequence.name} API`,
+          description: sequence.description,
+          version: '1.0.0'
+        },
+        paths: {
+          [`/sequences/${sequence.id || 'sequence_id'}/execute`]: {
+            post: {
+              summary: 'Execute sequence',
+              requestBody: {
+                required: true,
+                content: {
+                  'application/json': {
+                    schema: {
+                      type: 'object',
+                      properties: {
+                        input_data: {
+                          type: 'object',
+                          description: 'Input data for the sequence'
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      };
+      
+      const blob = new Blob([JSON.stringify(openAPISpec, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${sequence.name.replace(/\s+/g, '_')}_openapi_spec.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 2000);
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -1245,16 +1395,16 @@ const SequenceBuilder: React.FC<SequenceBuilderProps> = ({
             </div>
           </button>
           <button
-            onClick={() => setActiveTab('testing')}
+            onClick={() => setActiveTab('api')}
             className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'testing'
+              activeTab === 'api'
                 ? 'border-blue-500 text-blue-600'
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
             }`}
           >
             <div className="flex items-center space-x-2">
-              <PlayIcon className="w-4 h-4" />
-              <span>Testing & Execution</span>
+              <DocumentTextIcon className="w-4 h-4" />
+              <span>Generate API</span>
             </div>
           </button>
         </nav>
@@ -1868,65 +2018,58 @@ const SequenceBuilder: React.FC<SequenceBuilderProps> = ({
       )}
         </>
       ) : (
-        /* Testing Tab Content */
+        /* API Generation Tab Content */
         <div className="space-y-6">
-          {/* Real API Call Warning */}
-          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+          {/* API Generation Info */}
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
             <div className="flex items-start space-x-3">
               <div className="flex-shrink-0">
-                <ExclamationTriangleIcon className="w-5 h-5 text-yellow-600" />
+                <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center">
+                  <DocumentTextIcon className="w-4 h-4 text-blue-600" />
+                </div>
               </div>
               <div className="flex-1">
-                <h4 className="text-sm font-medium text-yellow-900">Real API Calls</h4>
-                <p className="text-sm text-yellow-700 mt-1">
-                  <strong>Warning:</strong> This testing interface will make actual HTTP requests to the configured API endpoints. 
-                  Make sure you're testing against the correct environment and that your authentication credentials are valid.
+                <h4 className="text-sm font-medium text-blue-900">Integration Sequence API</h4>
+                <p className="text-sm text-blue-700 mt-1">
+                  Generate APIs that can be consumed by your customer portal to execute integration sequences. 
+                  These APIs provide a clean interface for external systems to trigger your configured workflows.
                 </p>
               </div>
             </div>
           </div>
 
-          {/* Testing Header */}
+          {/* API Generation Header */}
           <div className="flex items-center justify-between">
             <div>
-              <h4 className="text-lg font-medium text-gray-900">Sequence Testing & Execution</h4>
+              <h4 className="text-lg font-medium text-gray-900">Generate Integration Sequence API</h4>
               <p className="text-sm text-gray-500">
-                Test your integration sequence with real data and monitor execution
+                Create APIs for external systems to execute your integration sequences
               </p>
             </div>
             <div className="flex items-center space-x-3">
               <button
-                onClick={() => setShowTestDataModal(true)}
-                className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
-              >
-                <DocumentTextIcon className="w-4 h-4" />
-                <span>Configure Test Data</span>
-              </button>
-              <button
-                onClick={resetExecution}
-                disabled={executionSteps.length === 0}
-                className="flex items-center space-x-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <ArrowPathIcon className="w-4 h-4" />
-                <span>Reset</span>
-              </button>
-              <button
-                onClick={testSequence}
-                disabled={!isValid || isExecuting}
+                onClick={() => generateApiSpec()}
+                disabled={!isValid}
                 className={`flex items-center space-x-2 px-4 py-2 text-sm font-medium text-white rounded-md ${
-                  isExecuting
-                    ? 'bg-blue-500 cursor-not-allowed'
-                    : isValid
+                  isValid
                     ? 'bg-green-600 hover:bg-green-700'
                     : 'bg-gray-400 cursor-not-allowed'
                 }`}
               >
-                {isExecuting ? (
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <PlayIcon className="w-4 h-4" />
-                )}
-                <span>{isExecuting ? 'Executing...' : 'Execute Sequence'}</span>
+                <DocumentTextIcon className="w-4 h-4" />
+                <span>Generate API Spec</span>
+              </button>
+              <button
+                onClick={() => generateClientCode()}
+                disabled={!isValid}
+                className={`flex items-center space-x-2 px-4 py-2 text-sm font-medium text-white rounded-md ${
+                  isValid
+                    ? 'bg-blue-600 hover:bg-blue-700'
+                    : 'bg-gray-400 cursor-not-allowed'
+                }`}
+              >
+                <CodeBracketIcon className="w-4 h-4" />
+                <span>Generate Client Code</span>
               </button>
             </div>
           </div>
@@ -1969,521 +2112,532 @@ const SequenceBuilder: React.FC<SequenceBuilderProps> = ({
             </div>
           </div>
 
-          {/* Execution Summary */}
-          {executionId && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
-                    <InformationCircleIcon className="w-5 h-5 text-blue-600" />
-                  </div>
-                  <div>
-                    <h5 className="text-sm font-medium text-blue-900">Execution ID: {executionId}</h5>
-                    <p className="text-sm text-blue-700">
-                      {executionSteps.filter(s => s.status === 'completed').length} of {executionSteps.length} steps completed
-                    </p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm text-blue-700">
-                    Started: {executionSteps[0]?.start_time ? new Date(executionSteps[0].start_time).toLocaleTimeString() : '-'}
-                  </p>
-                  <p className="text-sm text-blue-700">
-                    Duration: {formatDuration(executionSteps.reduce((total, step) => total + (step.duration_ms || 0), 0))}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Data Flow Visualization */}
-          {executionSteps.length > 0 && (
-            <div className="bg-white border border-gray-200 rounded-lg p-6 mb-6">
-              <h5 className="text-md font-medium text-gray-900 mb-4">Data Flow Between Steps</h5>
-              <div className="space-y-3">
-                {executionSteps.map((step, index) => {
-                  const nextStep = executionSteps[index + 1];
-                  const hasDataFlow = step.response_data && nextStep && nextStep.request_data;
-                  
-                  return (
-                    <div key={index} className="flex items-center space-x-4">
-                      {/* Step Info */}
-                      <div className="flex-1 bg-gray-50 rounded-lg p-3 border border-gray-200">
-                        <div className="flex items-center justify-between mb-2">
-                          <h6 className="text-sm font-medium text-gray-900">{step.step_name}</h6>
-                          <span className="text-xs text-gray-500">Step {step.step_order}</span>
-                        </div>
-                        
-                        {/* Output Fields */}
-                        {step.response_data && (
-                          <div className="text-xs">
-                            <span className="font-medium text-gray-700">Outputs:</span>
-                            <div className="mt-1 flex flex-wrap gap-1">
-                              {Object.keys(step.response_data.data || {}).map((key, keyIndex) => (
-                                <span 
-                                  key={keyIndex}
-                                  className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800"
-                                >
-                                  {key}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      
-                      {/* Flow Arrow */}
-                      {hasDataFlow && (
-                        <div className="flex flex-col items-center space-y-1">
-                          <ArrowRightIcon className="w-5 h-5 text-blue-500" />
-                          <span className="text-xs text-blue-600 font-medium">Data Flow</span>
-                        </div>
-                      )}
-                      
-                      {/* Next Step Info */}
-                      {nextStep && hasDataFlow && (
-                        <div className="flex-1 bg-blue-50 rounded-lg p-3 border border-blue-200">
-                          <div className="flex items-center justify-between mb-2">
-                            <h6 className="text-sm font-medium text-blue-900">{nextStep.step_name}</h6>
-                            <span className="text-xs text-blue-500">Step {nextStep.step_order}</span>
-                          </div>
-                          
-                          {/* Input Fields */}
-                          <div className="text-xs">
-                            <span className="font-medium text-blue-700">Inputs:</span>
-                            <div className="mt-1 flex flex-wrap gap-1">
-                              {Object.keys(nextStep.request_data || {}).slice(0, 5).map((key, keyIndex) => (
-                                <span 
-                                  key={keyIndex}
-                                  className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800"
-                                >
-                                  {key}
-                                </span>
-                              ))}
-                              {Object.keys(nextStep.request_data || {}).length > 5 && (
-                                <span className="text-xs text-blue-600">+{Object.keys(nextStep.request_data || {}).length - 5} more</span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-              
-              {/* Data Flow Summary */}
-              <div className="mt-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                <div className="text-xs text-gray-600">
-                  <span className="font-medium">Data Flow Summary:</span> 
-                  <span className="ml-2">
-                    {executionSteps.filter(step => step.response_data).length} steps produced data, 
-                    {executionSteps.filter(step => step.request_data).length} steps consumed data
-                  </span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Workflow Visualization */}
+          {/* API Endpoints */}
           <div className="bg-white border border-gray-200 rounded-lg p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h5 className="text-md font-medium text-gray-900">Workflow Execution</h5>
-              {isExecuting && (
-                <div className="flex items-center space-x-2 text-sm text-blue-600">
-                  <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                  <span>Executing...</span>
+            <h5 className="text-md font-medium text-gray-900 mb-4">Generated API Endpoints</h5>
+            <div className="space-y-4">
+              {/* Execute Sequence Endpoint */}
+              <div className="border border-gray-200 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center space-x-3">
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      POST
+                    </span>
+                    <code className="text-sm font-mono bg-gray-100 px-2 py-1 rounded">
+                      /api/v1/sequences/{sequence.id || 'sequence_id'}/execute
+                    </code>
+                  </div>
+                  <span className="text-sm text-gray-500">Execute Integration Sequence</span>
                 </div>
-              )}
-            </div>
-            
-            {/* Progress Bar */}
-            {executionSteps.length > 0 && (
-              <div className="mb-6">
-                <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
-                  <span>Overall Progress</span>
-                  <span>
-                    {executionSteps.filter(s => s.status === 'completed').length} / {executionSteps.length} steps
-                  </span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="bg-blue-600 h-2 rounded-full transition-all duration-300 ease-out"
-                    style={{ 
-                      width: `${executionSteps.length > 0 ? (executionSteps.filter(s => s.status === 'completed').length / executionSteps.length) * 100 : 0}%` 
-                    }}
-                  ></div>
+                <p className="text-sm text-gray-600 mb-3">
+                  Trigger the execution of this integration sequence with custom input data.
+                </p>
+                <div className="bg-gray-50 p-3 rounded border">
+                  <h6 className="text-xs font-medium text-gray-700 mb-2">Request Body Schema:</h6>
+                  <pre className="text-xs bg-white p-2 rounded border overflow-x-auto">
+{`{
+  "input_data": {
+    "full_name": "string",
+    "email": "string",
+    "phone": "string",
+    "loan_amount": "number"
+  },
+  "options": {
+    "async": false,
+    "timeout": 300
+  }
+}`}
+                  </pre>
                 </div>
               </div>
-            )}
-            
-            <div className="space-y-4">
-              {executionSteps.map((step, index) => (
-                <div key={index} className="relative">
-                  {/* Step Node */}
-                  <div className="flex items-center space-x-4">
-                    {/* Status Icon */}
-                    <div className="flex-shrink-0">
-                      {getStatusIcon(step.status)}
-                    </div>
-                    
-                    {/* Step Info */}
-                    <div className="flex-1 bg-gray-50 rounded-lg p-4 border border-gray-200">
-                      <div className="flex items-center justify-between mb-2">
-                        <h6 className="text-sm font-medium text-gray-900">{step.step_name}</h6>
-                        <div className="flex items-center space-x-2">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(step.status)}`}>
-                            {step.status.charAt(0).toUpperCase() + step.status.slice(1)}
-                          </span>
-                          {step.retry_count && step.retry_count > 0 && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
-                              Retry {step.retry_count}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs text-gray-600">
-                        <div>
-                          <span className="font-medium">Order:</span> {step.step_order}
-                        </div>
-                        <div>
-                          <span className="font-medium">Duration:</span> {formatDuration(step.duration_ms)}
-                        </div>
-                        <div>
-                          <span className="font-medium">Start:</span> {step.start_time ? new Date(step.start_time).toLocaleTimeString() : '-'}
-                        </div>
-                        <div>
-                          <span className="font-medium">End:</span> {step.end_time ? new Date(step.end_time).toLocaleTimeString() : '-'}
-                        </div>
-                      </div>
-                      
-                      {/* Data Flow Indicators */}
-                      {step.request_data && (
-                        <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded text-xs">
-                          <div className="flex items-center justify-between">
-                            <span className="font-medium text-blue-700">Request Payload</span>
-                            <span className="text-blue-600">
-                              {Object.keys(step.request_data).length} fields
-                            </span>
-                          </div>
-                          <div className="mt-1 text-blue-600">
-                            {Object.keys(step.request_data).slice(0, 3).join(', ')}
-                            {Object.keys(step.request_data).length > 3 && '...'}
-                          </div>
-                        </div>
-                      )}
-                      
-                      {/* Error Message */}
-                      {step.error_message && (
-                        <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
-                          <span className="font-medium">Error:</span> {step.error_message}
-                        </div>
-                      )}
-                      
-                      {/* Action Buttons */}
-                      <div className="flex items-center space-x-2 mt-3">
-                        <button
-                          onClick={() => setSelectedStepForDetails(selectedStepForDetails === index ? null : index)}
-                          className="flex items-center space-x-1 text-xs text-blue-600 hover:text-blue-800"
-                        >
-                          <EyeIcon className="w-3 h-3" />
-                          <span>{selectedStepForDetails === index ? 'Hide' : 'View'} Details</span>
-                        </button>
-                        {step.response_data && (
-                          <button
-                            onClick={() => {
-                              console.log('Response data:', step.response_data);
-                              toast.success('Response data logged to console');
-                            }}
-                            className="flex items-center space-x-1 text-xs text-green-600 hover:text-green-800"
-                          >
-                            <DocumentTextIcon className="w-3 h-3" />
-                            <span>View Response</span>
-                          </button>
-                        )}
-                      </div>
-                    </div>
+
+              {/* Get Sequence Status Endpoint */}
+              <div className="border border-gray-200 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center space-x-3">
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                      GET
+                    </span>
+                    <code className="text-sm font-mono bg-gray-100 px-2 py-1 rounded">
+                      /api/v1/sequences/{sequence.id || 'sequence_id'}/status
+                    </code>
                   </div>
-                  
-                  {/* Connection Line */}
-                  {index < executionSteps.length - 1 && (
-                    <div className="absolute left-6 top-16 w-0.5 h-8 bg-gray-300"></div>
-                  )}
-                  
-                  {/* Step Details Panel */}
-                  {selectedStepForDetails === index && (
-                    <div className="ml-10 mt-4 bg-white border border-gray-200 rounded-lg p-4">
-                      <h6 className="text-sm font-medium text-gray-900 mb-3">Step Details</h6>
-                      
-                      {/* Request Data */}
-                      {step.request_data && (
-                        <div className="mb-4">
-                          <h6 className="text-xs font-medium text-gray-700 block mb-2">Request Payload</h6>
-                          <div className="text-xs text-gray-600 mb-2">
-                            <span className="font-medium">Fields:</span> {Object.keys(step.request_data).length} | 
-                            <span className="font-medium ml-2">Size:</span> {JSON.stringify(step.request_data).length} chars
-                          </div>
-                          <pre className="text-xs bg-gray-50 p-2 rounded border overflow-x-auto max-h-40">
-                            {JSON.stringify(step.request_data, null, 2)}
-                          </pre>
-                        </div>
-                      )}
-                      
-                      {/* Response Data */}
-                      {step.response_data && (
-                        <div className="mb-4">
-                          <h6 className="text-xs font-medium text-gray-700 block mb-2">Response Data</h6>
-                          <div className="text-xs text-gray-600 mb-2">
-                            <span className="font-medium">HTTP Status:</span> {step.response_data._metadata?.status || 'N/A'} | 
-                            <span className="font-medium ml-2">Size:</span> {JSON.stringify(step.response_data).length} chars
-                          </div>
-                          
-                          {/* API Response */}
-                          <div className="mb-2">
-                            <h6 className="text-xs font-medium text-gray-600 block mb-1">API Response:</h6>
-                            <pre className="text-xs bg-gray-50 p-2 rounded border overflow-x-auto max-h-32">
-                              {JSON.stringify(step.response_data, (key, value) => {
-                                // Hide metadata in the main response display
-                                if (key === '_metadata') return undefined;
-                                return value;
-                              }, 2)}
-                            </pre>
-                          </div>
-                          
-                          {/* Response Metadata */}
-                          {step.response_data._metadata && (
-                            <div>
-                              <h6 className="text-xs font-medium text-gray-600 block mb-1">Response Metadata:</h6>
-                              <div className="text-xs bg-blue-50 p-2 rounded border">
-                                <div className="grid grid-cols-2 gap-2">
-                                  <div><span className="font-medium">HTTP Status:</span> {step.response_data._metadata.status}</div>
-                                  <div><span className="font-medium">Response Time:</span> {step.response_data._metadata.response_time_ms}ms</div>
-                                  <div><span className="font-medium">URL:</span> {step.response_data._metadata.url}</div>
-                                  <div><span className="font-medium">Method:</span> {step.response_data._metadata.method}</div>
-                                  <div><span className="font-medium">Timestamp:</span> {new Date(step.response_data._metadata.timestamp).toLocaleTimeString()}</div>
-                                </div>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      
-                      {/* Step Logs */}
-                      {step.logs && step.logs.length > 0 && (
-                        <div>
-                          <h6 className="text-xs font-medium text-gray-700 block mb-2">Step Logs</h6>
-                          <div className="space-y-1">
-                            {step.logs.map((log, logIndex) => (
-                              <div key={logIndex} className="text-xs p-2 bg-gray-50 rounded border">
-                                <span className="text-gray-500">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
-                                <span className={`ml-2 px-1 py-0.5 rounded text-xs font-medium ${
-                                  log.level === 'error' ? 'bg-red-100 text-red-800' :
-                                  log.level === 'warning' ? 'bg-yellow-100 text-yellow-800' :
-                                  log.level === 'info' ? 'bg-blue-100 text-blue-800' :
-                                  'bg-gray-100 text-gray-800'
-                                }`}>
-                                  {log.level.toUpperCase()}
-                                </span>
-                                <span className="ml-2">{log.message}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
+                  <span className="text-sm text-gray-500">Get Execution Status</span>
                 </div>
-              ))}
-              
-              {/* Empty State */}
-              {executionSteps.length === 0 && (
-                <div className="text-center py-12 bg-gray-50 border-2 border-dashed border-gray-300 rounded-lg">
-                  <PlayIcon className="mx-auto h-12 w-12 text-gray-400" />
-                  <h3 className="mt-2 text-sm font-medium text-gray-900">No execution data</h3>
-                  <p className="mt-1 text-sm text-gray-500">
-                    Execute the sequence to see the workflow visualization
-                  </p>
+                <p className="text-sm text-gray-600 mb-3">
+                  Check the status of a running or completed sequence execution.
+                </p>
+                <div className="bg-gray-50 p-3 rounded border">
+                  <h6 className="text-xs font-medium text-gray-700 mb-2">Response Schema:</h6>
+                  <pre className="text-xs bg-white p-2 rounded border overflow-x-auto">
+{`{
+  "execution_id": "string",
+  "status": "running|completed|failed",
+  "progress": {
+    "current_step": 1,
+    "total_steps": ${sequence.steps.length},
+    "completed_steps": 0
+  },
+  "started_at": "2024-01-01T00:00:00Z",
+  "estimated_completion": "2024-01-01T00:05:00Z"
+}`}
+                  </pre>
                 </div>
-              )}
+              </div>
+
+              {/* Get Sequence Results Endpoint */}
+              <div className="border border-gray-200 rounded-lg p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center space-x-3">
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                      GET
+                    </span>
+                    <code className="text-sm font-mono bg-gray-100 px-2 py-1 rounded">
+                      /api/v1/sequences/{sequence.id || 'sequence_id'}/results/{'{execution_id}'}
+                    </code>
+                  </div>
+                  <span className="text-sm text-gray-500">Get Execution Results</span>
+                </div>
+                <p className="text-sm text-gray-600 mb-3">
+                  Retrieve the complete results and data flow from a sequence execution.
+                </p>
+                <div className="bg-gray-50 p-3 rounded border">
+                  <h6 className="text-xs font-medium text-gray-700 mb-2">Response Schema:</h6>
+                  <pre className="text-xs bg-white p-2 rounded border overflow-x-auto">
+{`{
+  "execution_id": "string",
+  "sequence_name": "${sequence.name}",
+  "status": "completed",
+  "started_at": "2024-01-01T00:00:00Z",
+  "completed_at": "2024-01-01T00:05:00Z",
+  "total_duration_ms": 300000,
+  "steps": [
+    {
+      "step_order": 1,
+      "step_name": "${sequence.steps[0]?.name || 'Step 1'}",
+      "status": "completed",
+      "duration_ms": 1500,
+      "request_data": {},
+      "response_data": {},
+      "extracted_fields": {}
+    }
+  ],
+  "final_output": {},
+  "errors": []
+}`}
+                  </pre>
+                </div>
+              </div>
             </div>
           </div>
 
-          {/* Execution Logs */}
+          {/* Authentication & Usage */}
           <div className="bg-white border border-gray-200 rounded-lg p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h5 className="text-md font-medium text-gray-900">Execution Logs</h5>
-              <div className="flex items-center space-x-2">
-                <span className="text-sm text-gray-500">
-                  {executionLogs.length} log entries
-                </span>
-                {executionLogs.length > 0 && (
-                  <button
-                    onClick={() => setExecutionLogs([])}
-                    className="text-xs text-red-600 hover:text-red-800"
-                  >
-                    Clear Logs
-                  </button>
-                )}
+            <h5 className="text-md font-medium text-gray-900 mb-4">Authentication & Usage</h5>
+            <div className="space-y-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <h6 className="text-sm font-medium text-blue-900 mb-2">API Authentication</h6>
+                <p className="text-sm text-blue-700 mb-3">
+                  All API endpoints require authentication using your API key or OAuth2 token.
+                </p>
+                <div className="bg-white p-3 rounded border">
+                  <h6 className="text-xs font-medium text-blue-800 mb-2">Header Example:</h6>
+                  <pre className="text-xs bg-gray-100 p-2 rounded border overflow-x-auto">
+{`Authorization: Bearer YOUR_API_TOKEN
+Content-Type: application/json`}
+                  </pre>
+                </div>
               </div>
-            </div>
-            
-            <div className="space-y-2 max-h-96 overflow-y-auto">
-              {executionLogs.map((log, index) => (
-                <div key={index} className="flex items-start space-x-3 p-3 bg-gray-50 rounded-lg border">
-                  <div className={`flex-shrink-0 w-2 h-2 rounded-full mt-2 ${
-                    log.level === 'error' ? 'bg-red-500' :
-                    log.level === 'warning' ? 'bg-yellow-500' :
-                    log.level === 'info' ? 'bg-blue-500' :
-                    'bg-gray-500'
-                  }`}></div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center space-x-2">
-                      <span className="text-xs text-gray-500">
-                        {new Date(log.timestamp).toLocaleTimeString()}
-                      </span>
-                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${
-                        log.level === 'error' ? 'bg-red-100 text-red-800' :
-                        log.level === 'warning' ? 'bg-yellow-100 text-yellow-800' :
-                        log.level === 'info' ? 'bg-blue-100 text-blue-800' :
-                        'bg-gray-100 text-gray-800'
-                      }`}>
-                        {log.level.toUpperCase()}
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-900 mt-1">{log.message}</p>
-                    
-                    {/* Enhanced Data Display */}
-                    {log.data && (
-                      <details className="mt-2">
-                        <summary className="text-xs text-gray-600 cursor-pointer hover:text-gray-800">
-                          View Data
-                        </summary>
-                        <div className="mt-2 space-y-2">
-                          {/* Data Flow Information */}
-                          {log.data.data_flow && (
-                            <div className="p-2 bg-blue-50 border border-blue-200 rounded text-xs">
-                              <div className="font-medium text-blue-800 mb-1">Data Flow:</div>
-                              {log.data.extracted && (
-                                <div className="mb-1">
-                                  <span className="text-blue-700">Extracted:</span>
-                                  <div className="flex flex-wrap gap-1 mt-1">
-                                    {Object.entries(log.data.extracted).map(([key, value]) => (
-                                      <span key={key} className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                                        {key}: {String(value).substring(0, 20)}{String(value).length > 20 ? '...' : ''}
-                                      </span>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-                              {log.data.available_for_next_steps && (
-                                <div>
-                                  <span className="text-blue-700">Available for next steps:</span>
-                                  <div className="flex flex-wrap gap-1 mt-1">
-                                    {log.data.available_for_next_steps.slice(0, 5).map((field: string) => (
-                                      <span key={field} className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                        {field}
-                                      </span>
-                                    ))}
-                                    {log.data.available_for_next_steps.length > 5 && (
-                                      <span className="text-xs text-blue-600">+{log.data.available_for_next_steps.length - 5} more</span>
-                                    )}
-                                  </div>
-                                </div>
-                              )}
-                            </div>
-                          )}
-                          
-                          {/* Request/Response Data */}
-                          {log.data.request_payload && (
-                            <div className="p-2 bg-gray-50 border border-gray-200 rounded text-xs">
-                              <div className="font-medium text-gray-800 mb-1">Request Payload:</div>
-                              <pre className="text-xs bg-white p-2 rounded border overflow-x-auto max-h-32">
-                                {JSON.stringify(log.data.request_payload, null, 2)}
-                              </pre>
-                            </div>
-                          )}
-                          
-                          {/* General Data */}
-                          {!log.data.data_flow && !log.data.request_payload && (
-                            <pre className="text-xs bg-white p-2 rounded border overflow-x-auto max-h-32">
-                              {JSON.stringify(log.data, null, 2)}
-                            </pre>
-                          )}
-                        </div>
-                      </details>
-                    )}
+
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                <h6 className="text-sm font-medium text-green-900 mb-2">Rate Limiting</h6>
+                <p className="text-sm text-green-700 mb-3">
+                  API calls are rate-limited to ensure fair usage and system stability.
+                </p>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span className="font-medium text-green-800">Standard Plan:</span>
+                    <span className="ml-2 text-green-700">100 requests/minute</span>
+                  </div>
+                  <div>
+                    <span className="font-medium text-green-800">Premium Plan:</span>
+                    <span className="ml-2 text-green-700">1000 requests/minute</span>
                   </div>
                 </div>
-              ))}
-              
-              {executionLogs.length === 0 && (
-                <div className="text-center py-8 text-gray-500">
-                  No logs yet. Execute the sequence to see execution logs.
+              </div>
+
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <h6 className="text-sm font-medium text-yellow-900 mb-2">Error Handling</h6>
+                <p className="text-sm text-yellow-700 mb-3">
+                  All API responses include standard HTTP status codes and detailed error messages.
+                </p>
+                <div className="bg-white p-3 rounded border">
+                  <h6 className="text-xs font-medium text-yellow-800 mb-2">Error Response Format:</h6>
+                  <pre className="text-xs bg-gray-100 p-2 rounded border overflow-x-auto">
+{`{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid input data",
+    "details": {
+      "field": "email",
+      "issue": "Invalid email format"
+    }
+  },
+  "timestamp": "2024-01-01T00:00:00Z",
+  "request_id": "req_123456"
+}`}
+                  </pre>
                 </div>
-              )}
+              </div>
+            </div>
+          </div>
+
+          {/* API Generation Status */}
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+            <div className="flex items-center space-x-3">
+              <div className="w-8 h-8 bg-green-100 rounded-full flex items-center justify-center">
+                <CheckCircleIcon className="w-5 h-5 text-green-600" />
+              </div>
+              <div>
+                <h5 className="text-sm font-medium text-green-900">API Ready for Generation</h5>
+                <p className="text-sm text-green-700">
+                  Your integration sequence is configured and ready to generate customer-facing APIs.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* API Documentation */}
+          <div className="bg-white border border-gray-200 rounded-lg p-6">
+            <h5 className="text-md font-medium text-gray-900 mb-4">API Documentation</h5>
+            <div className="space-y-4">
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                <h6 className="text-sm font-medium text-gray-900 mb-2">Integration Sequence API</h6>
+                <p className="text-sm text-gray-600 mb-3">
+                  This API allows external systems to execute your configured integration sequence and retrieve results.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span className="font-medium text-gray-700">Base URL:</span>
+                    <span className="ml-2 text-gray-900">https://api.yourdomain.com</span>
+                  </div>
+                  <div>
+                    <span className="font-medium text-gray-700">API Version:</span>
+                    <span className="ml-2 text-gray-900">v1</span>
+                  </div>
+                  <div>
+                    <span className="font-medium text-gray-700">Format:</span>
+                    <span className="ml-2 text-gray-900">JSON</span>
+                  </div>
+                  <div>
+                    <span className="font-medium text-gray-700">Authentication:</span>
+                    <span className="ml-2 text-gray-900">Bearer Token</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <h6 className="text-sm font-medium text-blue-900 mb-2">Quick Start</h6>
+                <p className="text-sm text-blue-700 mb-3">
+                  Get started with a simple cURL example to execute your integration sequence.
+                </p>
+                <div className="bg-white p-3 rounded border">
+                  <h6 className="text-xs font-medium text-blue-800 mb-2">Execute Sequence:</h6>
+                  <pre className="text-xs bg-gray-100 p-2 rounded border overflow-x-auto">
+{`curl -X POST "https://api.yourdomain.com/api/v1/sequences/${sequence.id || 'sequence_id'}/execute" \\
+  -H "Authorization: Bearer YOUR_API_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "input_data": {
+      "full_name": "John Doe",
+      "email": "john@example.com",
+      "phone": "+1-555-123-4567",
+      "loan_amount": 50000
+    }
+  }'`}
+                  </pre>
+                </div>
+              </div>
+
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                <h6 className="text-sm font-medium text-green-900 mb-2">SDK & Libraries</h6>
+                <p className="text-sm text-green-700 mb-3">
+                  Use our pre-built SDKs and libraries for popular programming languages.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                  <div className="bg-white p-2 rounded border text-center">
+                    <div className="font-medium text-green-800">JavaScript/Node.js</div>
+                    <div className="text-xs text-green-600">npm install @yourcompany/api-client</div>
+                  </div>
+                  <div className="bg-white p-2 rounded border text-center">
+                    <div className="font-medium text-green-800">Python</div>
+                    <div className="text-xs text-green-600">pip install yourcompany-api-client</div>
+                  </div>
+                  <div className="bg-white p-2 rounded border text-center">
+                    <div className="font-medium text-green-800">PHP</div>
+                    <div className="text-xs text-green-600">composer require yourcompany/api-client</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* API Generation Tools */}
+          <div className="bg-white border border-gray-200 rounded-lg p-6">
+            <h5 className="text-md font-medium text-gray-900 mb-4">API Generation Tools</h5>
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <h6 className="text-sm font-medium text-gray-900 mb-2">OpenAPI Specification</h6>
+                  <p className="text-sm text-gray-600 mb-3">
+                    Generate OpenAPI 3.0 specification for your integration sequence API.
+                  </p>
+                  <button
+                    onClick={() => generateOpenAPISpec()}
+                    disabled={!isValid}
+                    className={`w-full px-4 py-2 text-sm font-medium text-white rounded-md ${
+                      isValid
+                        ? 'bg-green-600 hover:bg-green-700'
+                        : 'bg-gray-400 cursor-not-allowed'
+                    }`}
+                  >
+                    Generate OpenAPI Spec
+                  </button>
+                </div>
+
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <h6 className="text-sm font-medium text-gray-900 mb-2">Postman Collection</h6>
+                  <p className="text-sm text-gray-600 mb-3">
+                    Export a Postman collection for testing your API endpoints.
+                  </p>
+                  <button
+                    onClick={() => generatePostmanCollection()}
+                    disabled={!isValid}
+                    className={`w-full px-4 py-2 text-sm font-medium text-white rounded-md ${
+                      isValid
+                        ? 'bg-blue-600 hover:bg-blue-700'
+                        : 'bg-gray-400 cursor-not-allowed'
+                    }`}
+                  >
+                    Export Postman Collection
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <h6 className="text-sm font-medium text-gray-900 mb-2">JavaScript Client</h6>
+                  <p className="text-sm text-gray-600 mb-3">
+                    Generate a JavaScript/Node.js client library.
+                  </p>
+                  <button
+                    onClick={() => generateJavaScriptClient()}
+                    disabled={!isValid}
+                    className={`w-full px-3 py-2 text-sm font-medium text-white rounded-md ${
+                      isValid
+                        ? 'bg-yellow-600 hover:bg-yellow-700'
+                        : 'bg-gray-400 cursor-not-allowed'
+                    }`}
+                  >
+                    Generate JS Client
+                  </button>
+                </div>
+
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <h6 className="text-sm font-medium text-gray-900 mb-2">Python Client</h6>
+                  <p className="text-sm text-gray-600 mb-3">
+                    Generate a Python client library.
+                  </p>
+                  <button
+                    onClick={() => generatePythonClient()}
+                    disabled={!isValid}
+                    className={`w-full px-3 py-2 text-sm font-medium text-white rounded-md ${
+                      isValid
+                        ? 'bg-blue-600 hover:bg-blue-700'
+                        : 'bg-gray-400 cursor-not-allowed'
+                    }`}
+                  >
+                    Generate Python Client
+                  </button>
+                </div>
+
+                <div className="border border-gray-200 rounded-lg p-4">
+                  <h6 className="text-sm font-medium text-gray-900 mb-2">PHP Client</h6>
+                  <p className="text-sm text-gray-600 mb-3">
+                    Generate a PHP client library.
+                  </p>
+                  <button
+                    onClick={() => generatePHPClient()}
+                    disabled={!isValid}
+                    className={`w-full px-3 py-2 text-sm font-medium text-white rounded-md ${
+                      isValid
+                        ? 'bg-purple-600 hover:bg-purple-700'
+                        : 'bg-gray-400 cursor-not-allowed'
+                    }`}
+                  >
+                    Generate PHP Client
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* API Usage Examples */}
+          <div className="bg-white border border-gray-200 rounded-lg p-6">
+            <h5 className="text-md font-medium text-gray-900 mb-4">API Usage Examples</h5>
+            <div className="space-y-4">
+              <div className="border border-gray-200 rounded-lg p-4">
+                <h6 className="text-sm font-medium text-gray-900 mb-2">JavaScript/Node.js Example</h6>
+                <div className="bg-gray-50 p-3 rounded border">
+                  <pre className="text-xs bg-white p-2 rounded border overflow-x-auto">
+{`const axios = require('axios');
+
+const client = axios.create({
+  baseURL: 'https://api.yourdomain.com/api/v1',
+  headers: {
+    'Authorization': 'Bearer YOUR_API_TOKEN',
+    'Content-Type': 'application/json'
+  }
+});
+
+// Execute integration sequence
+async function executeSequence(inputData) {
+  try {
+    const response = await client.post(\`/sequences/${sequence.id || 'sequence_id'}/execute\`, {
+      input_data: inputData
+    });
+    
+    console.log('Execution started:', response.data);
+    return response.data.execution_id;
+  } catch (error) {
+    console.error('Error executing sequence:', error.response?.data);
+  }
+}
+
+// Check execution status
+async function checkStatus(executionId) {
+  try {
+    const response = await client.get(\`/sequences/${sequence.id || 'sequence_id'}/status\`);
+    console.log('Status:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('Error checking status:', error.response?.data);
+  }
+}
+
+// Get execution results
+async function getResults(executionId) {
+  try {
+    const response = await client.get(\`/sequences/${sequence.id || 'sequence_id'}/results/\${executionId}\`);
+    console.log('Results:', response.data);
+    return response.data;
+  } catch (error) {
+    console.error('Error getting results:', error.response?.data);
+  }
+}`}
+                  </pre>
+                </div>
+              </div>
+
+              <div className="border border-gray-200 rounded-lg p-4">
+                <h6 className="text-sm font-medium text-gray-900 mb-2">Python Example</h6>
+                <div className="bg-gray-50 p-3 rounded border">
+                  <pre className="text-xs bg-white p-2 rounded border overflow-x-auto">
+{`import requests
+import json
+
+class IntegrationSequenceClient:
+    def __init__(self, base_url, api_token):
+        self.base_url = base_url
+        self.headers = {
+            'Authorization': f'Bearer {api_token}',
+            'Content-Type': 'application/json'
+        }
+    
+    def execute_sequence(self, input_data):
+        url = f"{self.base_url}/sequences/{sequence.id or 'sequence_id'}/execute"
+        response = requests.post(url, json={'input_data': input_data}, headers=self.headers)
+        response.raise_for_status()
+        return response.json()
+    
+    def check_status(self):
+        url = f"{self.base_url}/sequences/{sequence.id or 'sequence_id'}/status"
+        response = requests.get(url, headers=self.headers)
+        response.raise_for_status()
+        return response.json()
+    
+    def get_results(self, execution_id):
+        url = f"{self.base_url}/sequences/{sequence.id or 'sequence_id'}/results/{execution_id}"
+        response = requests.get(url, headers=self.headers)
+        response.raise_for_status()
+        return response.json()
+
+# Usage
+client = IntegrationSequenceClient('https://api.yourdomain.com/api/v1', 'YOUR_API_TOKEN')
+
+# Execute sequence
+result = client.execute_sequence({
+    'full_name': 'John Doe',
+    'email': 'john@example.com',
+    'phone': '+1-555-123-4567',
+    'loan_amount': 50000
+})
+
+execution_id = result['execution_id']
+print(f"Execution started: {execution_id}")`}
+                  </pre>
+                </div>
+              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Test Data Configuration Modal */}
-      {showTestDataModal && (
+      {/* API Generation Progress Modal */}
+      {showApiGenerationModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
           <div className="bg-white rounded-lg shadow p-6 w-full max-w-2xl">
-            <h4 className="text-lg font-medium text-gray-900 mb-4">Configure Test Data</h4>
+            <h4 className="text-lg font-medium text-gray-900 mb-4">Generating API Resources</h4>
             <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
-                  <input
-                    type="text"
-                    value={testData.full_name}
-                    onChange={(e) => setTestData({ ...testData, full_name: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-center space-x-3">
+                  <div className="w-6 h-6 bg-blue-100 rounded-full flex items-center justify-center">
+                    <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                  </div>
+                  <div>
+                    <h5 className="text-sm font-medium text-blue-900">Generating {currentGenerationType}</h5>
+                    <p className="text-sm text-blue-700">
+                      Please wait while we generate your {currentGenerationType.toLowerCase()}.
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                  <input
-                    type="email"
-                    value={testData.email}
-                    onChange={(e) => setTestData({ ...testData, email: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+              </div>
+              
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span>Preparing sequence configuration...</span>
+                  <span className="text-green-600">✓</span>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-                  <input
-                    type="tel"
-                    value={testData.phone}
-                    onChange={(e) => setTestData({ ...testData, phone: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+                <div className="flex items-center justify-between text-sm">
+                  <span>Generating API endpoints...</span>
+                  <span className="text-green-600">✓</span>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Loan Amount</label>
-                  <input
-                    type="text"
-                    value={testData.loan_amount}
-                    onChange={(e) => setTestData({ ...testData, loan_amount: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+                <div className="flex items-center justify-between text-sm">
+                  <span>Creating documentation...</span>
+                  <span className="text-green-600">✓</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span>Finalizing {currentGenerationType.toLowerCase()}...</span>
+                  <span className="text-blue-600">⟳</span>
                 </div>
               </div>
             </div>
-            <div className="mt-6 flex justify-end space-x-3">
+            <div className="mt-6 flex justify-end">
               <button
-                onClick={() => setShowTestDataModal(false)}
+                onClick={() => setShowApiGenerationModal(false)}
                 className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50"
               >
-                Cancel
-              </button>
-              <button
-                onClick={() => setShowTestDataModal(false)}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700"
-              >
-                Save
+                Close
               </button>
             </div>
           </div>
