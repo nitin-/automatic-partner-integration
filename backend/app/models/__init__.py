@@ -9,6 +9,7 @@ from .api_test import APITest
 from .user import User
 from .field_mapping import FieldMapping, FieldMappingTemplate, TransformationType, DataType
 from .integration import Integration, IntegrationLog, IntegrationTest, IntegrationType, AuthenticationType, IntegrationStatus, IntegrationSequence
+from .deployed_api import DeployedAPI, DeployedIntegration
 
 __all__ = [
     "Base",
@@ -20,5 +21,6 @@ __all__ = [
     "User",
     "FieldMapping", "FieldMappingTemplate", "TransformationType", "DataType",
     "Integration", "IntegrationLog", "IntegrationTest", "IntegrationType", 
-    "AuthenticationType", "IntegrationStatus", "IntegrationSequence"
+    "AuthenticationType", "IntegrationStatus", "IntegrationSequence",
+    "DeployedAPI", "DeployedIntegration"
 ]

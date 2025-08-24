@@ -41,6 +41,8 @@ class Lender(Base):
     field_mappings = relationship("FieldMapping", back_populates="lender", cascade="all, delete-orphan")
     integrations = relationship("Integration", back_populates="lender", cascade="all, delete-orphan")
     integration_sequences = relationship("IntegrationSequence", back_populates="lender", cascade="all, delete-orphan")
+    deployed_apis = relationship("DeployedAPI", back_populates="lender", cascade="all, delete-orphan")
+    deployed_integrations = relationship("DeployedIntegration", back_populates="lender", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<Lender(id={self.id}, name='{self.name}', base_url='{self.base_url}')>"
