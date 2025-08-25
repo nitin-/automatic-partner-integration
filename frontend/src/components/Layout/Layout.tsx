@@ -131,7 +131,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             <div className="flex flex-1"></div>
             <div className="flex items-center gap-x-4 lg:gap-x-6">
               <button
-                onClick={() => { localStorage.removeItem('auth_token'); navigate('/login'); }}
+                onClick={() => { 
+                  localStorage.clear(); 
+                  navigate('/login'); 
+                }}
                 className="text-sm text-gray-600 hover:text-gray-900"
               >
                 Logout

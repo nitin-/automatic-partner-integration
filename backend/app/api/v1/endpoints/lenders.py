@@ -8,8 +8,8 @@ import structlog
 from ....core.database import get_db
 from ....models.lender import Lender
 from ....schemas.lender import LenderCreate, LenderUpdate, LenderResponse, LenderList
-from ....schemas.common import ResponseModel, PaginationParams, PaginationInfo
-from ....models.field_mapping import FieldMapping, TransformationType, DataType
+from ....schemas.common import ResponseModel, PaginationParams, PaginationInfo, MasterSourceFieldCreate, MasterSourceFieldUpdate, MasterSourceFieldResponse, CustomTargetFieldCreate, CustomTargetFieldUpdate, CustomTargetFieldResponse
+from ....models.field_mapping import FieldMapping, TransformationType, DataType, MasterSourceField, CustomTargetField
 from ....models.integration import IntegrationSequence, Integration, IntegrationType, AuthenticationType, IntegrationLog, IntegrationStatus
 from ....models.deployed_api import DeployedIntegration
 from ....services.integration_runner import IntegrationRunner
@@ -429,20 +429,157 @@ async def get_api_response_fields(
         raise HTTPException(status_code=500, detail="Failed to retrieve API response fields")
 
 
-def _extract_fields_recursive(data: dict, prefix: str, all_fields: set, field_counts: dict):
+@router.get("/{lender_id}/request-fields", response_model=ResponseModel)
+async def get_request_fields(
+    lender_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get unique fields from step request configurations for field mapping"""
+    try:
+        from ....models.integration import Integration, IntegrationSequence
+        
+        # Get all integration steps for this lender
+        result = await db.execute(
+            select(Integration)
+            .where(
+                Integration.lender_id == lender_id,
+                Integration.is_sequence_step == True
+            )
+            .order_by(Integration.sequence_order.asc())
+        )
+        
+        integrations = result.scalars().all()
+        
+        if not integrations:
+            return ResponseModel(
+                message="No integration steps found for this lender",
+                data={"fields": [], "total_steps": 0}
+            )
+        
+        # Extract unique fields from request schemas and templates
+        all_fields = set()
+        field_counts = {}
+        field_sources = {}  # Track which step each field comes from
+        
+        for integration in integrations:
+            step_name = integration.name
+            request_schema = integration.request_schema or {}
+            
+            # Extract fields from request_schema template
+            if isinstance(request_schema, dict):
+                template = request_schema.get("template", {})
+                if isinstance(template, dict):
+                    _extract_fields_recursive(template, "", all_fields, field_counts, step_name, field_sources)
+                
+                # Extract fields from query_params
+                query_params = request_schema.get("query_params", {})
+                if isinstance(query_params, dict):
+                    _extract_fields_recursive(query_params, "", all_fields, field_counts, step_name, field_sources)
+            
+            # Extract fields from depends_on_fields
+            depends_on_fields = integration.depends_on_fields or {}
+            if isinstance(depends_on_fields, dict):
+                for field in depends_on_fields.values():
+                    if field:
+                        all_fields.add(field)
+                        field_counts[field] = field_counts.get(field, 0) + 1
+                        if field not in field_sources:
+                            field_sources[field] = []
+                        field_sources[field].append(f"{step_name} (dependency)")
+        
+        # Convert to sorted list with field counts and sources
+        field_list = [
+            {
+                "field": field,
+                "count": field_counts.get(field, 0),
+                "frequency": (field_counts.get(field, 0) / len(integrations)) * 100,
+                "sources": field_sources.get(field, [])
+            }
+            for field in sorted(all_fields)
+        ]
+        
+        return ResponseModel(
+            message="Request fields retrieved successfully",
+            data={
+                "fields": field_list,
+                "total_steps": len(integrations),
+                "unique_fields_count": len(all_fields)
+            }
+        )
+        
+    except Exception as e:
+        logger.error("Failed to retrieve request fields", lender_id=lender_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve request fields")
+
+
+@router.get("/{lender_id}/request-fields-test", response_model=ResponseModel)
+async def get_request_fields_test(lender_id: int):
+    """Test endpoint for request fields without database dependency"""
+    return ResponseModel(
+        message="Request fields test endpoint working",
+        data={
+            "fields": [
+                {
+                    "field": "customer_name",
+                    "count": 1,
+                    "frequency": 100.0,
+                    "sources": ["Sample Step 1"]
+                },
+                {
+                    "field": "email_address", 
+                    "count": 1,
+                    "frequency": 100.0,
+                    "sources": ["Sample Step 1"]
+                }
+            ],
+            "total_steps": 1,
+            "unique_fields_count": 2
+        }
+    )
+
+
+@router.get("/{lender_id}/simple-test")
+async def simple_test(lender_id: int):
+    """Simple test endpoint"""
+    return {"message": "Simple test working", "lender_id": lender_id}
+
+
+@router.get("/{lender_id}/db-test")
+async def db_test(lender_id: int, db: AsyncSession = Depends(get_db)):
+    """Test database connection"""
+    try:
+        # Simple query to test database connection
+        result = await db.execute(select(Lender).where(Lender.id == lender_id))
+        lender = result.scalar_one_or_none()
+        
+        if lender:
+            return {"message": "Database connection working", "lender_name": lender.name}
+        else:
+            return {"message": "Database connection working", "lender_not_found": True}
+    except Exception as e:
+        return {"message": "Database connection failed", "error": str(e)}
+
+
+def _extract_fields_recursive(data: dict, prefix: str, all_fields: set, field_counts: dict, step_name: str = "", field_sources: dict = None):
     """Recursively extract field names from nested JSON data"""
     for key, value in data.items():
         field_path = f"{prefix}.{key}" if prefix else key
         all_fields.add(field_path)
         field_counts[field_path] = field_counts.get(field_path, 0) + 1
         
+        # Track source if provided
+        if field_sources is not None:
+            if field_path not in field_sources:
+                field_sources[field_path] = []
+            field_sources[field_path].append(step_name)
+        
         if isinstance(value, dict):
-            _extract_fields_recursive(value, field_path, all_fields, field_counts)
+            _extract_fields_recursive(value, field_path, all_fields, field_counts, step_name, field_sources)
         elif isinstance(value, list) and value and isinstance(value[0], dict):
             # Handle array of objects
             for item in value[:3]:  # Limit to first 3 items to avoid excessive recursion
                 if isinstance(item, dict):
-                    _extract_fields_recursive(item, f"{field_path}[]", all_fields, field_counts)
+                    _extract_fields_recursive(item, f"{field_path}[]", all_fields, field_counts, step_name, field_sources)
 
 
 @router.post("/{lender_id}/field-mappings", response_model=ResponseModel)
@@ -1204,3 +1341,385 @@ async def test_field_mapping(payload: dict):
     except Exception as e:
         logger.error("Mapping transform test failed", error=str(e))
         raise HTTPException(status_code=500, detail="Mapping transform test failed")
+
+
+# -------------------------------------
+# Custom Target Fields Management
+# -------------------------------------
+
+@router.get("/{lender_id}/custom-target-fields", response_model=ResponseModel[List[CustomTargetFieldResponse]])
+async def get_custom_target_fields(
+    lender_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get custom target fields for a lender"""
+    try:
+        result = await db.execute(
+            select(CustomTargetField)
+            .where(CustomTargetField.lender_id == lender_id)
+            .order_by(CustomTargetField.id.asc())
+        )
+        fields = result.scalars().all()
+        
+        return ResponseModel(
+            message="Custom target fields retrieved successfully",
+            data=[CustomTargetFieldResponse.model_validate(field) for field in fields]
+        )
+        
+    except Exception as e:
+        logger.error("Failed to retrieve custom target fields", lender_id=lender_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve custom target fields"
+        )
+
+
+@router.post("/{lender_id}/custom-target-fields", response_model=ResponseModel[CustomTargetFieldResponse], status_code=status.HTTP_201_CREATED)
+async def create_custom_target_field(
+    lender_id: int,
+    field_data: CustomTargetFieldCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Create a new custom target field for a lender"""
+    try:
+        # Verify lender exists
+        lender_result = await db.execute(
+            select(Lender).where(Lender.id == lender_id)
+        )
+        if not lender_result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Lender not found"
+            )
+        
+        # Check if field with same name already exists for this lender
+        existing_field = await db.execute(
+            select(CustomTargetField).where(
+                CustomTargetField.lender_id == lender_id,
+                CustomTargetField.name == field_data.name
+            )
+        )
+        if existing_field.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Custom target field with name '{field_data.name}' already exists for this lender"
+            )
+        
+        # Create new field
+        field = CustomTargetField(**field_data.model_dump())
+        field.lender_id = lender_id
+        db.add(field)
+        await db.commit()
+        await db.refresh(field)
+        
+        logger.info("Custom target field created successfully", field_id=field.id, field_name=field.name, lender_id=lender_id)
+        
+        return ResponseModel(
+            message="Custom target field created successfully",
+            data=CustomTargetFieldResponse.model_validate(field)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error("Failed to create custom target field", lender_id=lender_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create custom target field"
+        )
+
+
+@router.put("/{lender_id}/custom-target-fields/{field_id}", response_model=ResponseModel[CustomTargetFieldResponse])
+async def update_custom_target_field(
+    lender_id: int,
+    field_id: int,
+    field_data: CustomTargetFieldUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Update an existing custom target field"""
+    try:
+        # Get existing field
+        result = await db.execute(
+            select(CustomTargetField).where(
+                CustomTargetField.id == field_id,
+                CustomTargetField.lender_id == lender_id
+            )
+        )
+        field = result.scalar_one_or_none()
+        
+        if not field:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Custom target field not found"
+            )
+        
+        # Update field with provided data
+        update_data = field_data.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(field, key, value)
+        
+        await db.commit()
+        await db.refresh(field)
+        
+        logger.info("Custom target field updated successfully", field_id=field.id, field_name=field.name, lender_id=lender_id)
+        
+        return ResponseModel(
+            message="Custom target field updated successfully",
+            data=CustomTargetFieldResponse.model_validate(field)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error("Failed to update custom target field", field_id=field_id, lender_id=lender_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update custom target field"
+        )
+
+
+@router.delete("/{lender_id}/custom-target-fields/{field_id}", response_model=ResponseModel)
+async def delete_custom_target_field(
+    lender_id: int,
+    field_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete a custom target field"""
+    try:
+        # Get existing field
+        result = await db.execute(
+            select(CustomTargetField).where(
+                CustomTargetField.id == field_id,
+                CustomTargetField.lender_id == lender_id
+            )
+        )
+        field = result.scalar_one_or_none()
+        
+        if not field:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Custom target field not found"
+            )
+        
+        # Check if field is used in any mappings
+        mapping_count = await db.execute(
+            select(func.count(FieldMapping.id)).where(FieldMapping.target_field == field.name)
+        )
+        count = mapping_count.scalar()
+        
+        if count > 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot delete field '{field.name}' as it is used in {count} field mapping(s)"
+            )
+        
+        # Delete field
+        await db.delete(field)
+        await db.commit()
+        
+        logger.info("Custom target field deleted successfully", field_id=field_id, field_name=field.name, lender_id=lender_id)
+        
+        return ResponseModel(message="Custom target field deleted successfully")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error("Failed to delete custom target field", field_id=field_id, lender_id=lender_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete custom target field"
+        )
+
+
+# -------------------------------------
+# Enhanced Request Fields with Custom Fields
+# -------------------------------------
+
+@router.get("/{lender_id}/enhanced-request-fields", response_model=ResponseModel)
+async def get_enhanced_request_fields(
+    lender_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get request fields from step configurations plus custom target fields"""
+    try:
+        from ....models.integration import Integration, IntegrationSequence
+        
+        # Get all integration steps for this lender
+        result = await db.execute(
+            select(Integration)
+            .where(
+                Integration.lender_id == lender_id,
+                Integration.is_sequence_step == True
+            )
+            .order_by(Integration.sequence_order.asc())
+        )
+        
+        integrations = result.scalars().all()
+        
+        # Get custom target fields for this lender
+        custom_fields_result = await db.execute(
+            select(CustomTargetField)
+            .where(
+                CustomTargetField.lender_id == lender_id,
+                CustomTargetField.is_active == True
+            )
+            .order_by(CustomTargetField.id.asc())
+        )
+        custom_fields = custom_fields_result.scalars().all()
+        
+        # Extract fields from step configurations
+        all_fields = set()
+        field_counts = {}
+        field_sources = {}
+        
+        for integration in integrations:
+            step_name = integration.name
+            request_schema = integration.request_schema or {}
+            
+            # Extract fields from request_schema template
+            if isinstance(request_schema, dict):
+                template = request_schema.get("template", {})
+                if isinstance(template, dict):
+                    _extract_fields_recursive(template, "", all_fields, field_counts, step_name, field_sources)
+                
+                # Extract fields from query_params
+                query_params = request_schema.get("query_params", {})
+                if isinstance(query_params, dict):
+                    _extract_fields_recursive(query_params, "", all_fields, field_counts, step_name, field_sources)
+            
+            # Extract fields from depends_on_fields
+            depends_on_fields = integration.depends_on_fields or {}
+            if isinstance(depends_on_fields, dict):
+                for field in depends_on_fields.values():
+                    if field:
+                        all_fields.add(field)
+                        field_counts[field] = field_counts.get(field, 0) + 1
+                        if field not in field_sources:
+                            field_sources[field] = []
+                        field_sources[field].append(f"{step_name} (dependency)")
+        
+        # Add custom fields
+        for custom_field in custom_fields:
+            field_name = custom_field.name
+            all_fields.add(field_name)
+            field_counts[field_name] = field_counts.get(field_name, 0) + 1
+            if field_name not in field_sources:
+                field_sources[field_name] = []
+            field_sources[field_name].append(f"Custom Field: {custom_field.display_name}")
+        
+        # Convert to sorted list with field counts and sources
+        field_list = [
+            {
+                "field": field,
+                "count": field_counts.get(field, 0),
+                "frequency": (field_counts.get(field, 0) / max(len(integrations), 1)) * 100,
+                "sources": field_sources.get(field, []),
+                "is_custom": any(cf.name == field for cf in custom_fields)
+            }
+            for field in sorted(all_fields)
+        ]
+        
+        return ResponseModel(
+            message="Enhanced request fields retrieved successfully",
+            data={
+                "fields": field_list,
+                "total_steps": len(integrations),
+                "custom_fields_count": len(custom_fields),
+                "unique_fields_count": len(all_fields)
+            }
+        )
+        
+    except Exception as e:
+        logger.error("Failed to retrieve enhanced request fields", lender_id=lender_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to retrieve enhanced request fields")
+
+
+# -------------------------------------
+# Sequence Testing with Mapped Values
+# -------------------------------------
+
+@router.post("/{lender_id}/test-sequence-with-mappings", response_model=ResponseModel)
+async def test_sequence_with_mappings(
+    lender_id: int,
+    test_data: dict,
+    sequence_id: Optional[int] = Query(None, description="Specific sequence ID to test"),
+    db: AsyncSession = Depends(get_db)
+):
+    """Test integration sequence using field mappings"""
+    try:
+        # Get field mappings for this lender
+        mappings_result = await db.execute(
+            select(FieldMapping).where(
+                FieldMapping.lender_id == lender_id,
+                FieldMapping.is_active == True
+            )
+        )
+        field_mappings = list(mappings_result.scalars().all())
+        
+        # Get master source fields for validation
+        master_fields_result = await db.execute(
+            select(MasterSourceField).where(MasterSourceField.is_active == True)
+        )
+        master_fields = {field.name: field for field in master_fields_result.scalars().all()}
+        
+        # Validate test data against master source fields
+        validated_data = {}
+        missing_required_fields = []
+        
+        for mapping in field_mappings:
+            source_field = mapping.source_field
+            if source_field in test_data:
+                validated_data[source_field] = test_data[source_field]
+            elif mapping.is_required:
+                if source_field in master_fields and master_fields[source_field].default_value:
+                    validated_data[source_field] = master_fields[source_field].default_value
+                else:
+                    missing_required_fields.append(source_field)
+        
+        if missing_required_fields:
+            return ResponseModel(
+                success=False,
+                message=f"Missing required fields: {', '.join(missing_required_fields)}",
+                data={
+                    "missing_fields": missing_required_fields,
+                    "provided_fields": list(test_data.keys()),
+                    "mapped_fields": [m.source_field for m in field_mappings if m.is_active]
+                }
+            )
+        
+        # Run the integration sequence with mapped data
+        integration_runner = IntegrationRunner()
+        
+        if sequence_id:
+            # Test specific sequence
+            result = await integration_runner.run(
+                db=db,
+                lender_id=lender_id,
+                input_payload=validated_data,
+                mode="test",
+                sequence_id=sequence_id
+            )
+        else:
+            # Test first active sequence
+            result = await integration_runner.run(
+                db=db,
+                lender_id=lender_id,
+                input_payload=validated_data,
+                mode="test"
+            )
+        
+        return ResponseModel(
+            message="Sequence test completed successfully",
+            data={
+                "test_data": validated_data,
+                "field_mappings_applied": len(field_mappings),
+                "sequence_result": result
+            }
+        )
+        
+    except Exception as e:
+        logger.error("Failed to test sequence with mappings", lender_id=lender_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to test sequence with mappings")

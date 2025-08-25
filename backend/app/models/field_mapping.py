@@ -29,6 +29,68 @@ class DataType(str, enum.Enum):
     CURRENCY = "currency"
 
 
+class MasterSourceField(Base):
+    __tablename__ = "master_source_fields"
+
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Field information
+    name = Column(String(255), nullable=False, unique=True, index=True)
+    display_name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    field_type = Column(Enum(DataType), default=DataType.STRING)
+    
+    # Validation and constraints
+    is_required = Column(Boolean, default=False)
+    validation_rules = Column(JSON, nullable=True)  # Store validation rules
+    default_value = Column(String(500), nullable=True)
+    
+    # Sample data for testing
+    sample_data = Column(JSON, nullable=True)  # Store sample values for testing
+    
+    # Status
+    is_active = Column(Boolean, default=True)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<MasterSourceField(id={self.id}, name='{self.name}', display_name='{self.display_name}')>"
+
+
+class CustomTargetField(Base):
+    __tablename__ = "custom_target_fields"
+
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Field information
+    name = Column(String(255), nullable=False, index=True)
+    display_name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    field_type = Column(Enum(DataType), default=DataType.STRING)
+    
+    # Field path for nested structures
+    field_path = Column(String(500), nullable=True)  # For nested fields like "address.street"
+    
+    # Default values
+    default_value = Column(String(500), nullable=True)
+    
+    # Relationships
+    lender_id = Column(Integer, ForeignKey("lenders.id"), nullable=False)
+    lender = relationship("Lender", back_populates="custom_target_fields")
+    
+    # Status
+    is_active = Column(Boolean, default=True)
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<CustomTargetField(id={self.id}, name='{self.name}', lender_id={self.lender_id})>"
+
+
 class FieldMapping(Base):
     __tablename__ = "field_mappings"
 

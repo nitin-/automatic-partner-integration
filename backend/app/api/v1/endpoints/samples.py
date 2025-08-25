@@ -1,12 +1,16 @@
 from typing import List, Dict, Any
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+import structlog
 
 from ....core.database import get_db
 from ....services.sample_configs import SampleConfigGenerator
 from ....services.integration_service import IntegrationService
 from ....schemas.common import ResponseModel
-import structlog
+from ....models.lender import Lender
+from ....models.field_mapping import FieldMapping, MasterSourceField
+from ....models.integration import IntegrationSequence, Integration
 
 logger = structlog.get_logger()
 router = APIRouter()
@@ -350,3 +354,50 @@ async def get_sample_sequence(lender_name: str) -> ResponseModel[Dict[str, Any]]
     except Exception as e:
         logger.error(f"Failed to get sequence: {e}")
         raise HTTPException(status_code=500, detail="Failed to get sequence")
+
+
+@router.post("/populate-master-source-fields", response_model=ResponseModel)
+async def populate_master_source_fields(db: AsyncSession = Depends(get_db)) -> ResponseModel[Dict[str, Any]]:
+    """Populate the system with sample master source fields"""
+    try:
+        # Get sample master source fields
+        sample_fields = SampleConfigGenerator.get_sample_master_source_fields()
+        
+        created_fields = []
+        skipped_fields = []
+        
+        for field_data in sample_fields:
+            # Check if field already exists
+            existing_field = await db.execute(
+                select(MasterSourceField).where(MasterSourceField.name == field_data["name"])
+            )
+            
+            if existing_field.scalar_one_or_none():
+                skipped_fields.append(field_data["name"])
+                continue
+            
+            # Create new field
+            field = MasterSourceField(**field_data)
+            db.add(field)
+            created_fields.append(field_data["name"])
+        
+        await db.commit()
+        
+        return ResponseModel(
+            success=True,
+            message=f"Successfully populated master source fields",
+            data={
+                "created_fields": created_fields,
+                "skipped_fields": skipped_fields,
+                "total_created": len(created_fields),
+                "total_skipped": len(skipped_fields)
+            }
+        )
+        
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to populate master source fields: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to populate master source fields: {str(e)}"
+        )

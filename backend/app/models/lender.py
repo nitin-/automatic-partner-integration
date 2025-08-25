@@ -39,6 +39,7 @@ class Lender(Base):
     api_configs = relationship("APIConfig", back_populates="lender", cascade="all, delete-orphan")
     generated_apis = relationship("GeneratedAPI", back_populates="lender", cascade="all, delete-orphan")
     field_mappings = relationship("FieldMapping", back_populates="lender", cascade="all, delete-orphan")
+    custom_target_fields = relationship("CustomTargetField", back_populates="lender", cascade="all, delete-orphan")
     integrations = relationship("Integration", back_populates="lender", cascade="all, delete-orphan")
     integration_sequences = relationship("IntegrationSequence", back_populates="lender", cascade="all, delete-orphan")
     deployed_apis = relationship("DeployedAPI", back_populates="lender", cascade="all, delete-orphan")

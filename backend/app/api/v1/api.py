@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from .endpoints import lenders, api_configs, api_templates, generated_apis, api_tests, users, deployments, samples, analytics, health, external, auth, validation, utils, steps, integrations
+from .endpoints import lenders, api_configs, api_templates, generated_apis, api_tests, users, deployments, samples, analytics, health, external, auth, validation, utils, steps, integrations, field_management
 
 api_router = APIRouter()
 
@@ -8,6 +8,12 @@ api_router.include_router(
     lenders.router,
     prefix="/lenders",
     tags=["lenders"]
+)
+
+api_router.include_router(
+    field_management.router,
+    prefix="/field-management",
+    tags=["field-management"]
 )
 
 api_router.include_router(

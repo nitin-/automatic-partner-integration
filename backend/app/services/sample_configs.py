@@ -7,6 +7,162 @@ class SampleConfigGenerator:
     """Service for generating sample lender configurations for testing"""
     
     @staticmethod
+    def get_sample_master_source_fields() -> List[Dict[str, Any]]:
+        """Get sample master source fields for the system"""
+        return [
+            {
+                "name": "full_name",
+                "display_name": "Full Name",
+                "description": "Complete name of the person",
+                "field_type": DataType.STRING,
+                "is_required": True,
+                "validation_rules": {"min_length": 2, "max_length": 100},
+                "default_value": None,
+                "sample_data": {"sample_values": ["John Doe", "Jane Smith", "Bob Johnson"]}
+            },
+            {
+                "name": "email",
+                "display_name": "Email Address",
+                "description": "Email address of the person",
+                "field_type": DataType.EMAIL,
+                "is_required": True,
+                "validation_rules": {"pattern": r"^[^\s@]+@[^\s@]+\.[^\s@]+$"},
+                "default_value": None,
+                "sample_data": {"sample_values": ["john.doe@example.com", "jane.smith@example.com"]}
+            },
+            {
+                "name": "phone",
+                "display_name": "Phone Number",
+                "description": "Contact phone number",
+                "field_type": DataType.PHONE,
+                "is_required": True,
+                "validation_rules": {"min_length": 10, "max_length": 15},
+                "default_value": None,
+                "sample_data": {"sample_values": ["+1234567890", "9876543210"]}
+            },
+            {
+                "name": "date_of_birth",
+                "display_name": "Date of Birth",
+                "description": "Date of birth in YYYY-MM-DD format",
+                "field_type": DataType.STRING,
+                "is_required": True,
+                "validation_rules": {"pattern": r"^\d{4}-\d{2}-\d{2}$"},
+                "default_value": None,
+                "sample_data": {"sample_values": ["1990-01-15", "1985-06-22"]}
+            },
+            {
+                "name": "address",
+                "display_name": "Address",
+                "description": "Complete address",
+                "field_type": DataType.STRING,
+                "is_required": False,
+                "validation_rules": {"max_length": 500},
+                "default_value": None,
+                "sample_data": {"sample_values": ["123 Main St, City, State 12345"]}
+            },
+            {
+                "name": "city",
+                "display_name": "City",
+                "description": "City name",
+                "field_type": DataType.STRING,
+                "is_required": False,
+                "validation_rules": {"max_length": 100},
+                "default_value": None,
+                "sample_data": {"sample_values": ["New York", "Los Angeles", "Chicago"]}
+            },
+            {
+                "name": "state",
+                "display_name": "State",
+                "description": "State or province",
+                "field_type": DataType.STRING,
+                "is_required": False,
+                "validation_rules": {"max_length": 50},
+                "default_value": None,
+                "sample_data": {"sample_values": ["NY", "CA", "TX"]}
+            },
+            {
+                "name": "zip_code",
+                "display_name": "ZIP Code",
+                "description": "Postal/ZIP code",
+                "field_type": DataType.STRING,
+                "is_required": False,
+                "validation_rules": {"pattern": r"^\d{5}(-\d{4})?$"},
+                "default_value": None,
+                "sample_data": {"sample_values": ["12345", "12345-6789"]}
+            },
+            {
+                "name": "loan_amount",
+                "display_name": "Loan Amount",
+                "description": "Requested loan amount",
+                "field_type": DataType.CURRENCY,
+                "is_required": True,
+                "validation_rules": {"min_value": 100, "max_value": 1000000},
+                "default_value": None,
+                "sample_data": {"sample_values": ["50000", "100000", "250000"]}
+            },
+            {
+                "name": "loan_type",
+                "display_name": "Loan Type",
+                "description": "Type of loan requested",
+                "field_type": DataType.STRING,
+                "is_required": True,
+                "validation_rules": {"allowed_values": ["personal", "business", "mortgage", "auto"]},
+                "default_value": "personal",
+                "sample_data": {"sample_values": ["personal", "business", "mortgage"]}
+            },
+            {
+                "name": "employment_status",
+                "display_name": "Employment Status",
+                "description": "Current employment status",
+                "field_type": DataType.STRING,
+                "is_required": False,
+                "validation_rules": {"allowed_values": ["employed", "self_employed", "unemployed", "retired"]},
+                "default_value": "employed",
+                "sample_data": {"sample_values": ["employed", "self_employed"]}
+            },
+            {
+                "name": "annual_income",
+                "display_name": "Annual Income",
+                "description": "Annual income amount",
+                "field_type": DataType.CURRENCY,
+                "is_required": False,
+                "validation_rules": {"min_value": 0},
+                "default_value": None,
+                "sample_data": {"sample_values": ["75000", "120000", "200000"]}
+            },
+            {
+                "name": "ssn",
+                "display_name": "Social Security Number",
+                "description": "Social Security Number (masked)",
+                "field_type": DataType.STRING,
+                "is_required": False,
+                "validation_rules": {"pattern": r"^\d{3}-\d{2}-\d{4}$"},
+                "default_value": None,
+                "sample_data": {"sample_values": ["123-45-6789"]}
+            },
+            {
+                "name": "bank_account",
+                "display_name": "Bank Account Number",
+                "description": "Bank account number (masked)",
+                "field_type": DataType.STRING,
+                "is_required": False,
+                "validation_rules": {"min_length": 8, "max_length": 17},
+                "default_value": None,
+                "sample_data": {"sample_values": ["1234567890"]}
+            },
+            {
+                "name": "routing_number",
+                "display_name": "Bank Routing Number",
+                "description": "Bank routing number",
+                "field_type": DataType.STRING,
+                "is_required": False,
+                "validation_rules": {"pattern": r"^\d{9}$"},
+                "default_value": None,
+                "sample_data": {"sample_values": ["123456789"]}
+            }
+        ]
+    
+    @staticmethod
     def get_sample_lenders() -> List[Dict[str, Any]]:
         """Get sample lenders with different integration patterns"""
         return [
